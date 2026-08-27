@@ -49,3 +49,31 @@ def buyer_agent_capabilities(principal: str = "buyer-agent") -> CapabilitySet:
         },
         limits={"single_transaction_inr": 4500, "daily_inr": 10000},
     )
+
+
+def security_kernel_capabilities(principal: str = "security-kernel") -> CapabilitySet:
+    """The ONLY principal permitted to mint authorizations (Phase 3).
+
+    Authorization issuance is deliberately split away from the buyer agent. The
+    buyer agent — the principal an LLM or a compromised agent acts through —
+    explicitly denies ``authorization.issue``, so no amount of agent compromise
+    can mint an authorization: **LLM OUTPUT -> NEVER AUTHORIZATION**.
+
+    The kernel principal is not a superuser. It may issue authorizations and
+    propose payments; it is still denied ``payment.execute``, ``refund.execute``
+    and ``policy.modify``, so an authorization can be created but never
+    self-executed, and the kernel cannot rewrite the policy it enforces.
+    """
+    return CapabilitySet(
+        principal=principal,
+        allow={
+            Capability.AUTHORIZATION_ISSUE,
+            Capability.PAYMENT_PROPOSE,
+        },
+        deny={
+            Capability.PAYMENT_EXECUTE,
+            Capability.REFUND_EXECUTE,
+            Capability.POLICY_MODIFY,
+            Capability.MERCHANT_MODIFY,
+        },
+    )

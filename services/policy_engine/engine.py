@@ -19,6 +19,12 @@ from packages.schemas.domain import (
 )
 from packages.schemas.kernel import ProvenancedOffer
 
+# Version of this deterministic ruleset. Every decision is stamped with it and
+# the stamp is bound into the transaction digest (Phase 3), so an approval taken
+# under one policy version can never be consumed under another. Bump this
+# whenever the rules below change in a way that could alter an outcome.
+POLICY_VERSION = "policy-v1"
+
 
 def evaluate(
     constraints: MissionConstraints,
@@ -31,6 +37,7 @@ def evaluate(
     if best is None:
         return PolicyDecision(
             decision=PolicyOutcome.DENY,
+            policy_version=POLICY_VERSION,
             reason_codes=[ReasonCode.NO_VALID_OFFERS],
             requested_amount=None,
             soft_budget=soft,
@@ -45,6 +52,7 @@ def evaluate(
     if amount > hard:
         return PolicyDecision(
             decision=PolicyOutcome.DENY,
+            policy_version=POLICY_VERSION,
             reason_codes=[ReasonCode.HARD_LIMIT_EXCEEDED],
             requested_amount=amount,
             soft_budget=soft,
@@ -61,6 +69,7 @@ def evaluate(
 
     return PolicyDecision(
         decision=outcome,
+        policy_version=POLICY_VERSION,
         reason_codes=reasons,
         requested_amount=amount,
         soft_budget=soft,

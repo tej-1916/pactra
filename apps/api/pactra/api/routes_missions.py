@@ -1,20 +1,27 @@
-"""Mission API routes (Phase 1)."""
+"""Mission API routes (Phase 1 + Phase 3 authorization lifecycle)."""
 
 from __future__ import annotations
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from packages.schemas.domain import CreateMissionRequest
+from packages.schemas.domain import CreateMissionRequest, EventType, MissionState
 from services.agent_orchestrator.orchestrator import Orchestrator
-from services.audit_ledger.ledger import list_events
+from services.agent_orchestrator.state_machine import assert_transition
+from services.audit_ledger.ledger import append_event, list_events
+from services.security_kernel.authorization import (
+    AuthorizationFailure,
+    activate_authorization,
+    authorization_for_mission,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.db.models import Mission, Offer, PolicyDecisionRow
+from apps.api.db.models import AuthorizationRow, Mission, Offer, PolicyDecisionRow
 from apps.api.db.session import get_session
 from apps.api.pactra.schemas_api import (
     AuditEventOut,
+    AuthorizationOut,
     MissionOut,
     OfferOut,
     PolicyDecisionOut,
@@ -26,6 +33,7 @@ router = APIRouter(prefix="/api/v1", tags=["missions"])
 def _offer_out(o: Offer) -> OfferOut:
     return OfferOut(
         offer_id=o.id,
+        offer_version=o.offer_version,
         merchant_id=o.merchant_id,
         merchant_name=o.merchant_name,
         merchant_trust=o.merchant_trust,
@@ -38,6 +46,30 @@ def _offer_out(o: Offer) -> OfferOut:
         valid=o.valid,
         rejection_reasons=list(o.rejection_reasons or []),
         rank=o.rank,
+    )
+
+
+def _authorization_out(row: AuthorizationRow) -> AuthorizationOut:
+    """Project an authorization row for the API.
+
+    Note what is NOT copied across: the nonce. It never leaves the kernel.
+    """
+    return AuthorizationOut(
+        authorization_id=row.authorization_id,
+        mission_id=row.mission_id,
+        status=row.status,
+        transaction_digest=row.transaction_digest,
+        binding_version=row.binding_version,
+        policy_version=row.policy_version,
+        offer_version=row.offer_version,
+        issued_at=row.issued_at,
+        expires_at=row.expires_at,
+        consumed_at=row.consumed_at,
+        bound_merchant_id=row.bound_merchant_id,
+        bound_product_id=row.bound_product_id,
+        bound_quantity=row.bound_quantity,
+        bound_amount_inr=row.bound_amount_inr,
+        bound_currency=row.bound_currency,
     )
 
 
@@ -76,6 +108,7 @@ async def _mission_out(session: AsyncSession, mission: Mission) -> MissionOut:
         policy_decision=(
             PolicyDecisionOut(
                 decision=pd.decision,
+                policy_version=pd.policy_version,
                 reason_codes=list(pd.reason_codes or []),
                 requested_amount=pd.requested_amount,
                 soft_budget=pd.soft_budget,
@@ -141,3 +174,67 @@ async def get_offers(
         .all()
     )
     return [_offer_out(o) for o in offers]
+
+
+@router.get("/missions/{mission_id}/authorization", response_model=AuthorizationOut)
+async def get_authorization(
+    mission_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> AuthorizationOut:
+    """Read the mission's authorization artifact. Never includes the nonce."""
+    await _load_mission(session, mission_id)
+    row = await authorization_for_mission(session, mission_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no authorization for this mission")
+    return _authorization_out(row)
+
+
+@router.post("/missions/{mission_id}/authorization/approve", response_model=AuthorizationOut)
+async def approve_authorization(
+    mission_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> AuthorizationOut:
+    """Human approval: activate a PENDING authorization (PENDING -> ACTIVE).
+
+    This grants no payment capability — Phase 3 has no executor. It moves the
+    artifact into the only state from which it can later be consumed exactly
+    once, against exactly the transaction it is bound to.
+
+    Activation is the atomic conditional UPDATE in the security kernel, so a
+    second approval of the same authorization cannot succeed, and an expired
+    authorization cannot be activated at all.
+    """
+    mission = await _load_mission(session, mission_id)
+    row = await authorization_for_mission(session, mission_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no authorization for this mission")
+
+    if mission.state != MissionState.AWAITING_APPROVAL.value:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason_code": "MISSION_NOT_AWAITING_APPROVAL",
+                "state": mission.state,
+            },
+        )
+
+    try:
+        activated = await activate_authorization(session, authorization_id=row.authorization_id)
+    except AuthorizationFailure as failure:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": failure.reason_code, "detail": failure.detail},
+        ) from failure
+
+    assert_transition(MissionState(mission.state), MissionState.AUTHORIZED)
+    mission.state = MissionState.AUTHORIZED.value
+    await session.flush()
+    await append_event(
+        session,
+        mission_id=mission.id,
+        event_type=EventType.AUTHORIZATION_ACTIVATED,
+        actor="human-approver",
+        payload={
+            "authorization_id": str(activated.authorization_id),
+            "status": activated.status,
+        },
+    )
+    return _authorization_out(activated)

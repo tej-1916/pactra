@@ -17,6 +17,13 @@ Before the buyer agent proposes a purchase, the capability firewall enforces
 `payment.propose`; the privileged `payment.execute` capability is denied, so the
 (future) executor is unreachable from here.
 
+Once the policy engine has adjudicated, the kernel binds the decision to an
+exact transaction (Phase 3) and mints a server-issued authorization artifact
+committed to that transaction's digest. Issuance runs under the
+`security-kernel` principal because `authorization.issue` is denied to the buyer
+agent: a compromised agent cannot mint its own authorization. A DENY decision
+produces no authorization at all.
+
 Every transition is validated by the state machine and recorded as an
 append-only audit event. No LLM, no payment execution, no approval token yet.
 """
@@ -24,6 +31,7 @@ append-only audit event. No LLM, no payment execution, no approval token yet.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 from apps.api.db.models import (
     Mission,
@@ -31,6 +39,7 @@ from apps.api.db.models import (
     Offer,
     PolicyDecisionRow,
 )
+from apps.api.pactra.config import get_settings
 from packages.schemas.capability import Capability
 from packages.schemas.domain import (
     CreateMissionRequest,
@@ -38,8 +47,9 @@ from packages.schemas.domain import (
     MissionState,
     PolicyOutcome,
     ReasonCode,
+    utcnow,
 )
-from packages.schemas.invariants import require
+from packages.schemas.invariants import InvariantViolation, require
 from packages.schemas.kernel import ProvenancedOffer
 from packages.schemas.merchant import AuthenticatedQuote
 from packages.schemas.provenance import untrusted
@@ -54,6 +64,12 @@ from services.policy_engine import engine
 from services.policy_engine.normalization import normalize_offers
 from services.policy_engine.ranking import rank_offers
 from services.security_kernel.authority import AuthorityEscalation
+from services.security_kernel.authorization import (
+    activate_authorization,
+    generate_nonce,
+    issue_authorization,
+)
+from services.security_kernel.binding import build_bound_transaction
 from services.security_kernel.capability import enforce
 from services.security_kernel.capability_registry import capabilities_for
 from services.security_kernel.ingress import protected_policy_values
@@ -62,6 +78,10 @@ from services.security_kernel.policy_register import ProtectedPolicyRegister
 
 ACTOR = "orchestrator"
 BUYER_PRINCIPAL = "buyer-agent"
+# Authorization issuance runs as its own principal. The buyer agent is DENIED
+# `authorization.issue`, which is what makes LLM OUTPUT -> NEVER AUTHORIZATION
+# structural rather than a convention.
+KERNEL_PRINCIPAL = "security-kernel"
 
 
 class Orchestrator:
@@ -225,6 +245,7 @@ class Orchestrator:
                 Offer(
                     id=dto.offer_id,
                     mission_id=mission.id,
+                    offer_version=dto.offer_version,
                     merchant_id=dto.merchant_id,
                     merchant_name=dto.merchant_name,
                     merchant_trust=dto.merchant_trust,
@@ -328,6 +349,7 @@ class Orchestrator:
             PolicyDecisionRow(
                 mission_id=mission.id,
                 decision=decision.decision.value,
+                policy_version=decision.policy_version,
                 reason_codes=[r.value for r in decision.reason_codes],
                 requested_amount=decision.requested_amount,
                 soft_budget=decision.soft_budget,
@@ -344,16 +366,8 @@ class Orchestrator:
             payload=decision.model_dump(mode="json"),
         )
 
-        # Branch on decision
-        if decision.decision == PolicyOutcome.REQUIRE_APPROVAL:
-            await self._transition(
-                session,
-                mission,
-                MissionState.AWAITING_APPROVAL,
-                EventType.APPROVAL_REQUESTED,
-                payload={"requested_amount": decision.requested_amount},
-            )
-        elif decision.decision == PolicyOutcome.DENY:
+        # A DENY produces NO authorization: NO VALID AUTHORIZATION -> NO PAYMENT.
+        if decision.decision == PolicyOutcome.DENY:
             await self._transition(
                 session,
                 mission,
@@ -362,8 +376,64 @@ class Orchestrator:
                 actor="policy-engine",
                 payload={"reason_codes": [r.value for r in decision.reason_codes]},
             )
-        # ALLOW: mission stays at POLICY_CHECKED, ready for authorization
-        # (transaction binding + approval land in Phase 3). No payment here.
+            await session.flush()
+            return mission
+
+        # TRANSACTION BINDING (Phase 3). The approval is committed to this exact
+        # transaction via a canonical SHA-256 digest. `best` is guaranteed
+        # non-None here: a decision with no offer is always DENY, handled above.
+        if best is None:
+            # Raised directly rather than via require() so the type checker
+            # narrows `best`. Never an `assert`: assertions vanish under -O.
+            raise InvariantViolation(
+                "authorization.authorizable_decision_has_offer",
+                f"{decision.decision.value} decision produced no offer to bind",
+            )
+        expires_at = utcnow() + timedelta(seconds=get_settings().authorization_ttl_seconds)
+        transaction = build_bound_transaction(
+            offer=best,
+            decision=decision,
+            quantity=request.quantity,
+            nonce=generate_nonce(),
+            expires_at=expires_at,
+        )
+        # Issued under the kernel principal; `authorization.issue` is denied to
+        # the buyer agent, so this path is unreachable from agent-controlled code.
+        authorization = await issue_authorization(
+            session,
+            capabilities=capabilities_for(KERNEL_PRINCIPAL),
+            mission_id=mission.id,
+            transaction=transaction,
+        )
+
+        if decision.decision == PolicyOutcome.REQUIRE_APPROVAL:
+            # Stays PENDING until a human approves; activation is a separate,
+            # explicit step (POST /missions/{id}/authorization/approve).
+            await self._transition(
+                session,
+                mission,
+                MissionState.AWAITING_APPROVAL,
+                EventType.APPROVAL_REQUESTED,
+                payload={
+                    "requested_amount": decision.requested_amount,
+                    "authorization_id": str(authorization.authorization_id),
+                },
+            )
+        else:
+            # ALLOW: policy requires no human approval, so the kernel activates
+            # the authorization immediately and the mission reaches AUTHORIZED.
+            await activate_authorization(session, authorization_id=authorization.authorization_id)
+            await self._transition(
+                session,
+                mission,
+                MissionState.AUTHORIZED,
+                EventType.AUTHORIZATION_ACTIVATED,
+                actor="security-kernel",
+                payload={
+                    "authorization_id": str(authorization.authorization_id),
+                    "requested_amount": decision.requested_amount,
+                },
+            )
 
         await session.flush()
         return mission

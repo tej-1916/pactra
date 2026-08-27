@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from packages.schemas.domain import NormalizedOffer, ReasonCode, new_uuid
 from packages.schemas.invariants import require
 from packages.schemas.provenance import Provenanced
+from packages.schemas.transaction import compute_offer_version
 
 # Trusted, server-owned. Never derived from a merchant payload.
 IDENTITY_FIELDS = (
@@ -82,6 +83,29 @@ class ProvenancedOffer(BaseModel):
         return value
 
     @property
+    def offer_version(self) -> str:
+        """Deterministic content fingerprint of this offer (Phase 3).
+
+        Server-computed from the offer's security-relevant values — it is a
+        fingerprint OF untrusted content, not a claim BY the merchant (merchants
+        have no field with which to declare a version). The identity half comes
+        from the authenticated ``merchant_id``, never ``claimed_merchant_id``,
+        so a spoofed offer cannot fingerprint as the merchant it impersonates.
+
+        Bound into the transaction digest: editing any of these values after
+        approval changes the version and therefore invalidates the binding.
+        """
+        return compute_offer_version(
+            merchant_id=self.merchant_id.value,
+            product_id=self.product_id.value,
+            amount_inr=self.amount_inr.value,
+            currency=self.currency.value,
+            rating=self.rating.value,
+            in_stock=self.in_stock.value,
+            offered_at=self.offered_at.value,
+        )
+
+    @property
     def identity_mismatch(self) -> bool:
         """True when the payload claimed an identity other than the merchant the
         transport actually authenticated — i.e. an identity spoof attempt."""
@@ -94,6 +118,7 @@ class ProvenancedOffer(BaseModel):
         """Project to the persistence/API DTO, preserving provenance metadata."""
         return NormalizedOffer(
             offer_id=self.offer_id,
+            offer_version=self.offer_version,
             merchant_id=self.merchant_id.value,
             claimed_merchant_id=self.claimed_merchant_id.value,
             merchant_name=self.merchant_name.value,

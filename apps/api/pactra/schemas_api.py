@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 class OfferOut(BaseModel):
     offer_id: uuid.UUID
+    offer_version: str
     merchant_id: str
     merchant_name: str
     merchant_trust: float
@@ -26,6 +27,7 @@ class OfferOut(BaseModel):
 
 class PolicyDecisionOut(BaseModel):
     decision: str
+    policy_version: str
     reason_codes: list[str]
     requested_amount: int | None
     soft_budget: int
@@ -42,6 +44,35 @@ class AuditEventOut(BaseModel):
     previous_hash: str
     event_hash: str
     created_at: datetime
+
+
+class AuthorizationOut(BaseModel):
+    """Public projection of an authorization artifact.
+
+    The ``nonce`` is deliberately absent. It is server-held material that is
+    part of the digest preimage; disclosing it would hand out the one input an
+    attacker cannot otherwise guess. Nothing outside the kernel needs it, so
+    nothing outside the kernel receives it.
+
+    This artifact is SERVER-ISSUED, not cryptographically signed — Phase 3
+    implements no signing, so no field here claims one.
+    """
+
+    authorization_id: uuid.UUID
+    mission_id: uuid.UUID
+    status: str
+    transaction_digest: str
+    binding_version: str
+    policy_version: str
+    offer_version: str
+    issued_at: datetime
+    expires_at: datetime
+    consumed_at: datetime | None
+    bound_merchant_id: str
+    bound_product_id: str
+    bound_quantity: int
+    bound_amount_inr: int
+    bound_currency: str
 
 
 class MissionOut(BaseModel):

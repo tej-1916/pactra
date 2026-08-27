@@ -8,12 +8,17 @@ arrives on a request is irrelevant and cannot expand a principal's rights.
 
 from __future__ import annotations
 
-from packages.schemas.capability import CapabilitySet, buyer_agent_capabilities
+from packages.schemas.capability import (
+    CapabilitySet,
+    buyer_agent_capabilities,
+    security_kernel_capabilities,
+)
 
 # Trusted, in-code registry. In later phases this may move to persistent
 # application configuration, but it is always server-owned.
 _REGISTRY = {
     "buyer-agent": buyer_agent_capabilities,
+    "security-kernel": security_kernel_capabilities,
 }
 
 

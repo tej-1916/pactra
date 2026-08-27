@@ -45,8 +45,10 @@ USER POLICY
 The top level is named `USER_POLICY`, not "user-signed policy": it is
 authoritative because it is established server-side at the trusted API boundary,
 **not** because it carries a cryptographic signature. No signing exists yet. A
-`VERIFIED_USER_POLICY` level may be introduced when Phase 3 implements real
-signing; until then the name does not claim a guarantee the code cannot deliver.
+`VERIFIED_USER_POLICY` level may be introduced if real signing is ever
+implemented. Phase 3 did NOT implement it — it delivered transaction binding and
+server-issued authorization artifacts instead — so the level is still absent and
+the name does not claim a guarantee the code cannot deliver.
 
 Example: merchant content asserting `budget = ₹100000` targets USER_POLICY from
 MERCHANT authority → `AUTHORITY_ESCALATION` → DENY.
@@ -95,7 +97,10 @@ transport and ingress.
 
 Scope note: `IN_PROCESS_ADAPTER` authentication means identity comes from
 server-side adapter registration, not from the wire. It is **not** cryptographic
-authentication; mutual TLS / signed merchant assertions are Phase 3 work.
+authentication. Phase 2 anticipated mutual TLS / signed merchant assertions in
+Phase 3; Phase 3 delivered transaction binding and authorization instead, so
+cryptographic merchant authentication remains **unimplemented** and is not
+claimed anywhere in the code.
 
 ## Invariant errors, not assertions
 
@@ -146,25 +151,122 @@ agent may `catalog.read`, `merchant.discover`, `offer.request`, `offer.rank`,
 `policy.modify`, `authorization.issue`, `merchant.modify`. A compromised LLM
 cannot reach the privileged executor without a satisfied capability check.
 
-## Transaction binding
+## Transaction binding (implemented, Phase 3)
 
-On approval, the authorization binds to the exact transaction:
+On approval, the authorization binds to the exact transaction. Nine fields are
+covered:
+
+```text
+merchant_id, product_id, quantity, amount_inr, currency,
+policy_version, offer_version, expires_at, nonce
+```
+
+The digest is **not** a concatenation. Naive concatenation is ambiguous —
+`merchant_id="ab" | product_id="c"` and `"a" | "bc"` produce identical bytes, so
+two different transactions would share a digest and one could be substituted for
+the other after approval. Instead the preimage is built by
+`packages/schemas/canonical.py`:
 
 ```text
 transaction_digest = SHA256(
-  merchant_id + product_id + quantity + amount + currency
-  + policy_version + offer_version + expiry + nonce )
+    "pactra-txn-bind-v1" || 0x1f || canonical_json({field: [type_tag, value]})
+)
 ```
 
-If price, merchant, product, quantity, currency, or policy version changes after
-approval, the digest no longer matches → `TRANSACTION_BINDING_FAILURE` → payment
-denied.
+* **Structured** — sorted-key JSON, so field names are inside the preimage and
+  no value can bleed across a field boundary.
+* **Type-tagged** — `["i", 3799]` vs `["s", "3799"]` vs `["b", true]`; integer,
+  string and boolean forms of the same token cannot collide.
+* **Domain-separated** — a digest computed for one purpose cannot be replayed as
+  a digest for another.
+* **Float-free** — binary floats have no canonical decimal form, so the encoder
+  rejects them; ratings enter the offer fingerprint scaled to integers.
+* **Instant-exact** — timestamps are fixed-precision UTC, so the same moment
+  hashes alike regardless of the writer's timezone.
 
-## Replay protection
+`offer_version` is a server-computed fingerprint of the offer's
+security-relevant content, and `policy_version` stamps the ruleset that
+adjudicated. Because both are inside the digest, an approval cannot be carried
+across an offer edit or a policy change.
 
-Authorizations are nonce-bound, expiring, one-time-use where appropriate, and
-tied to a transaction digest. A consumed authorization cannot be reused →
-`AUTHORIZATION_REPLAY_DETECTED`.
+`merchant_id` in the binding is always the transport-AUTHENTICATED identity,
+never the merchant's self-asserted `claimed_merchant_id` — otherwise a spoofing
+merchant could bind an authorization to the identity it was impersonating.
+
+If price, merchant, product, quantity, currency, or either version changes after
+approval, the digest no longer matches → `TRANSACTION_BINDING_FAILURE` → the
+authorization can never be consumed.
+
+## Authorization artifact (implemented, Phase 3)
+
+```text
+authorization_id, mission_id, transaction_digest, nonce, issued_at,
+expires_at, status, policy_version, offer_version, binding_version,
+consumed_at, bound_{merchant_id, product_id, quantity, amount_inr, currency}
+```
+
+```text
+PENDING  --activate-->  ACTIVE  --consume-->  CONSUMED   (terminal)
+   |                       |
+   +-----------------------+--expire--> EXPIRED          (terminal)
+   +-----------------------+--revoke--> REVOKED          (terminal)
+```
+
+**This is a server-issued authorization artifact, NOT a cryptographically
+signed one.** Phase 3 implements no signing and no signature verification. The
+artifact is authoritative because it is minted, held, and consumed entirely
+inside the trusted server boundary — never because it carries a verifiable user
+signature. The 256-bit `nonce` is server-held entropy that makes each
+authorization unique and its digest unpredictable; it is not a key, not a token
+issued to a client, and is never returned by the API or written to an audit
+payload. Cryptographic user signatures remain future work, and the
+`VERIFIED_USER_POLICY` authority level anticipated in Phase 2 is therefore still
+not introduced.
+
+Issuance is gated by the `authorization.issue` capability, which is held only by
+the `security-kernel` principal and explicitly **denied** to `buyer-agent`. That
+is what makes `LLM OUTPUT -> NEVER AUTHORIZATION` structural rather than a
+convention. A `DENY` policy decision issues no authorization at all.
+
+## Replay protection and concurrency (implemented, Phase 3)
+
+Every privileged state transition is a SINGLE atomic conditional UPDATE whose
+WHERE clause carries the entire precondition. The database's `rowcount` is the
+only thing that decides whether the transition happened:
+
+```sql
+UPDATE authorizations
+   SET status='CONSUMED', consumed_at=:now
+ WHERE authorization_id=:id
+   AND status='ACTIVE'              -- not already consumed/revoked/expired
+   AND transaction_digest=:digest   -- bound to THIS exact transaction
+   AND expires_at > :now            -- still inside its window
+```
+
+There is deliberately no read-then-write and no in-memory boolean on the
+decision path. Two requests that both observed `ACTIVE` will both issue this
+UPDATE; exactly one gets `rowcount == 1`. The loser is told
+`AUTHORIZATION_REPLAY_DETECTED` and changes nothing. The row is re-read after a
+*failed* UPDATE only to classify why it failed — that read never grants
+anything, because the transition was already refused by the database.
+
+Storage-level invariants:
+
+```text
+authorizations.nonce UNIQUE
+(status = 'CONSUMED') = (consumed_at IS NOT NULL)
+```
+
+The UNIQUE constraint makes a duplicated nonce impossible; the CHECK makes an
+inconsistent consumption record impossible. Protection against *double*
+consumption is the conditional UPDATE above, not either constraint.
+
+Audit events for the lifecycle: `AUTHORIZATION_CREATED`,
+`AUTHORIZATION_ACTIVATED`, `AUTHORIZATION_CONSUMED`, `AUTHORIZATION_EXPIRED`,
+`AUTHORIZATION_REVOKED`, `AUTHORIZATION_REPLAY_DETECTED`,
+`TRANSACTION_BINDING_FAILURE`. Payloads carry a truncated digest prefix — enough
+to correlate events across a mission, not enough to be a copy of the artifact —
+and never the nonce.
 
 ## Payment reliability (transactional outbox)
 

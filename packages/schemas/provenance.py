@@ -26,7 +26,8 @@ class AuthorityLevel(IntEnum):
     current phase cryptographically signs a user policy. It is authoritative
     because it is established server-side at the trusted API boundary, not
     because it carries a verifiable signature. A ``VERIFIED_USER_POLICY`` level
-    may be introduced once Phase 3 implements real signing.
+    may be introduced if real signing is ever implemented; Phase 3 did not
+    implement it, so the level is deliberately still absent.
     """
 
     MERCHANT_DATA = 10

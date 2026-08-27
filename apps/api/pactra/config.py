@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     razorpay_key_id: str = "rzp_test_REPLACE_ME"
     payment_test_mode: bool = True
 
+    # How long a freshly issued authorization stays usable (Phase 3). Short by
+    # design: an approval is a commitment to one transaction at one moment, and
+    # a long window is a long replay window.
+    authorization_ttl_seconds: int = 900
+
     llm_provider: str = "mock"
     app_env: str = "development"
 

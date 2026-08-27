@@ -43,13 +43,29 @@ async def test_deny_path_cancels_mission(session):
     assert EventType.MISSION_DENIED.value in [e.event_type for e in events]
 
 
-async def test_approve_path_stays_policy_checked(session):
+async def test_allow_path_reaches_authorized(session):
+    """Phase 3 supersedes the Phase 2 behaviour here.
+
+    Under Phase 2 an ALLOW decision left the mission parked at POLICY_CHECKED
+    because no authorization existed yet. Phase 3 implements the authorization
+    artifact, so an ALLOW — policy requiring no human approval — now binds the
+    transaction, mints the artifact, activates it, and reaches AUTHORIZED. No
+    Phase 2 security invariant is relaxed by this: the change is the arrival of
+    the missing step, not the removal of a check.
+    """
     req = CreateMissionRequest(
         quantity=1,
         constraints=make_constraints(soft_budget_inr=5000, hard_limit_inr=6000),
     )
     mission = await Orchestrator().run(session, req)
-    assert mission.state == MissionState.POLICY_CHECKED.value
+    assert mission.state == MissionState.AUTHORIZED.value
+
+    events = await list_events(session, mission.id)
+    types = [e.event_type for e in events]
+    assert EventType.AUTHORIZATION_CREATED.value in types
+    assert EventType.AUTHORIZATION_ACTIVATED.value in types
+    # The hash chain still covers the new authorization events.
+    assert [e.sequence for e in events] == list(range(len(events)))
 
 
 async def test_offers_persisted_with_ranks(session):

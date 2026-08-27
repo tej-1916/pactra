@@ -111,8 +111,8 @@ UNTRUSTED DATA → RETAINS PROVENANCE / TAINT
 ```text
 Phase 1  Domain + deterministic policy + audit chain            [DONE]
 Phase 2  Security-kernel primitives: provenance, taint,
-         authority lattice, capability firewall                 [NEXT]
-Phase 3  Transaction binding + authorization + replay protection
+         authority lattice, capability firewall                 [DONE]
+Phase 3  Transaction binding + authorization + replay protection [DONE]
 Phase 4  Payment reliability: FakeProvider, idempotency, outbox,
          webhook verification, fault injection; then Razorpay test
 Phase 5  Audit /verify endpoint + corruption test + event replay
@@ -130,8 +130,7 @@ Phase 10 Demo hardening: seeded data, one-command demo, metrics
 Phase 1 delivers the deterministic core that the kernel builds on: mission
 creation, two mock merchant agents, offer normalization/ranking, the
 deterministic policy engine, and an append-only, hash-chained audit ledger. No
-LLM, no Razorpay, no frontend. (Policy vocabulary migrates to
-`ALLOW / REQUIRE_APPROVAL / DENY` in Phase 2.)
+LLM, no Razorpay, no frontend.
 
 ### Setup
 
@@ -145,7 +144,7 @@ For local runtime with PostgreSQL + Redis:
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d
-cd apps/api && alembic upgrade head    # runs the initial migration
+cd apps/api && alembic upgrade head    # applies all migrations
 ```
 
 ### Run the API
@@ -188,3 +187,128 @@ trail. The Nimbus merchant embeds a prompt-injection string in its product
 description; normalization discards all free-form merchant text, so it never
 reaches the policy engine — the first, foundational instance of the taint
 guarantee that Phase 2 formalizes across the whole kernel.
+
+---
+
+## Phase 3 — transaction binding + authorization + replay protection (implemented)
+
+Phase 3 makes an approval bind to **one exact transaction**, and makes that
+binding one-time and expiring. There is still no payment execution: Phase 3
+produces the artifact a future executor will require, and nothing more.
+
+### Transaction binding
+
+Nine fields are committed to by a single digest:
+
+```text
+merchant_id, product_id, quantity, amount_inr, currency,
+policy_version, offer_version, expires_at, nonce
+```
+
+The digest is deliberately **not** built by concatenating strings — naive
+concatenation lets `("ab", "c")` and `("a", "bc")` collide, so one approved
+transaction could be swapped for another. Instead
+`packages/schemas/canonical.py` produces a domain-separated, type-tagged,
+sorted-key preimage:
+
+```text
+transaction_digest = SHA256(
+    "pactra-txn-bind-v1" || 0x1f || canonical_json({field: [type_tag, value]})
+)
+```
+
+Field names are inside the preimage, values are type-tagged so `1` / `"1"` /
+`true` cannot collide, floats are rejected outright (no canonical form), and
+timestamps are fixed-precision UTC.
+
+```text
+approved:  merchant=merchant_a product=P1 amount=3799 quantity=1 currency=INR
+later:     amount=4399
+result:    TRANSACTION_BINDING_FAILURE -> authorization invalid
+           -> future payment path impossible
+```
+
+### Authorization artifact
+
+```text
+PENDING  --activate-->  ACTIVE  --consume-->  CONSUMED   (terminal)
+   |                       |
+   +-----------------------+--expire--> EXPIRED          (terminal)
+   +-----------------------+--revoke--> REVOKED          (terminal)
+```
+
+**Server-issued, not cryptographically signed.** Phase 3 implements no signing
+and no signature verification, so nothing here is described as signed. The
+artifact is authoritative because it is minted, held, and consumed entirely
+inside the trusted server boundary. The 256-bit `nonce` is server-held entropy
+that makes the artifact unique and its digest unpredictable — it is never
+returned by the API and never written into an audit payload.
+
+Issuance requires the `authorization.issue` capability, held only by the
+`security-kernel` principal and explicitly denied to `buyer-agent`. A `DENY`
+policy decision issues no authorization at all.
+
+### Replay protection and concurrency
+
+Consumption is a single atomic conditional UPDATE; the database's `rowcount` is
+the decision. There is no read-then-write and no in-memory boolean on the
+decision path:
+
+```sql
+UPDATE authorizations
+   SET status='CONSUMED', consumed_at=:now
+ WHERE authorization_id=:id
+   AND status='ACTIVE' AND transaction_digest=:digest AND expires_at > :now
+```
+
+Two requests that both observed `ACTIVE` both issue this UPDATE; exactly one
+gets `rowcount == 1`. The loser gets `AUTHORIZATION_REPLAY_DETECTED` and changes
+nothing. Storage adds `authorizations.nonce UNIQUE` and a CHECK that a
+consumption timestamp exists if and only if the row is `CONSUMED`.
+
+### Endpoints added
+
+```text
+GET  /api/v1/missions/{id}/authorization          # artifact, never the nonce
+POST /api/v1/missions/{id}/authorization/approve  # PENDING -> ACTIVE
+```
+
+Approval grants no payment capability — there is no executor yet. It moves the
+artifact into the only state from which it can later be consumed exactly once,
+against exactly the transaction it is bound to.
+
+### Audit events
+
+```text
+AUTHORIZATION_CREATED     AUTHORIZATION_ACTIVATED   AUTHORIZATION_CONSUMED
+AUTHORIZATION_EXPIRED     AUTHORIZATION_REVOKED     AUTHORIZATION_REPLAY_DETECTED
+TRANSACTION_BINDING_FAILURE
+```
+
+Payloads carry a truncated digest prefix — enough to correlate events across a
+mission, not enough to reproduce the artifact — and never the nonce.
+
+### Try it
+
+```bash
+# 1. Create a mission that needs approval (best offer 4299 > soft budget 4000)
+MISSION=$(curl -s -X POST http://127.0.0.1:8000/api/v1/missions \
+  -H 'content-type: application/json' \
+  -d '{"quantity":1,"constraints":{"category":"wireless_earbuds",
+       "soft_budget_inr":4000,"hard_limit_inr":4500,"min_rating":4.2,
+       "currency":"INR"}}' | python -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+
+# 2. Inspect the PENDING authorization (note: no nonce is returned)
+curl -s http://127.0.0.1:8000/api/v1/missions/$MISSION/authorization
+
+# 3. Approve it -> ACTIVE, mission reaches AUTHORIZED
+curl -s -X POST http://127.0.0.1:8000/api/v1/missions/$MISSION/authorization/approve
+```
+
+### Not implemented in Phase 3
+
+No payment execution, no Razorpay, no transactional outbox, no frontend, no risk
+model, no Attack Lab. No cryptographic signing of any kind — neither user
+authorization signatures nor merchant authentication (mutual TLS / signed
+merchant assertions remain unimplemented, despite Phase 2 having anticipated
+them here).

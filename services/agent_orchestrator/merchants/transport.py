@@ -7,9 +7,11 @@ any payload is read. Downstream code therefore receives offers already paired
 with an identity it did not have to infer from merchant-controlled data.
 
 Honest scoping: ``IN_PROCESS_ADAPTER`` is not cryptographic authentication.
-Phase 2 has no signing or mutual TLS; identity is trusted because it comes from
-server-side registration rather than from the wire. Real cryptographic merchant
-authentication is Phase 3 work and is not claimed here.
+There is no signing and no mutual TLS; identity is trusted because it comes from
+server-side registration rather than from the wire. Phase 2 anticipated
+cryptographic merchant authentication in Phase 3, but Phase 3 delivered
+transaction binding and authorization instead — so it remains unimplemented and
+is not claimed here.
 """
 
 from __future__ import annotations

@@ -21,6 +21,20 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def as_utc(value: datetime) -> datetime:
+    """Normalize a datetime read back from storage to timezone-aware UTC.
+
+    SQLite has no timezone-aware type: SQLAlchemy writes UTC and reads back a
+    *naive* datetime. Comparing that to an aware `utcnow()` raises TypeError, so
+    every datetime crossing the storage boundary is normalized here. Values are
+    written as UTC unconditionally, so attaching UTC on read is exact rather
+    than a guess. PostgreSQL returns aware values already and is unaffected.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def new_uuid() -> uuid.UUID:
     return uuid.uuid4()
 
@@ -56,6 +70,14 @@ class EventType(str, Enum):
     APPROVAL_REQUESTED = "APPROVAL_REQUESTED"
     MISSION_DENIED = "MISSION_DENIED"
     SECURITY_VIOLATION = "SECURITY_VIOLATION"
+    # Authorization lifecycle (Phase 3)
+    AUTHORIZATION_CREATED = "AUTHORIZATION_CREATED"
+    AUTHORIZATION_ACTIVATED = "AUTHORIZATION_ACTIVATED"
+    AUTHORIZATION_CONSUMED = "AUTHORIZATION_CONSUMED"
+    AUTHORIZATION_EXPIRED = "AUTHORIZATION_EXPIRED"
+    AUTHORIZATION_REVOKED = "AUTHORIZATION_REVOKED"
+    AUTHORIZATION_REPLAY_DETECTED = "AUTHORIZATION_REPLAY_DETECTED"
+    TRANSACTION_BINDING_FAILURE = "TRANSACTION_BINDING_FAILURE"
 
 
 class PolicyOutcome(str, Enum):
@@ -82,6 +104,12 @@ class ReasonCode(str, Enum):
     # Kernel (Phase 2)
     AUTHORITY_ESCALATION = "AUTHORITY_ESCALATION"
     CAPABILITY_DENIED = "CAPABILITY_DENIED"
+    # Transaction binding / authorization (Phase 3)
+    TRANSACTION_BINDING_FAILURE = "TRANSACTION_BINDING_FAILURE"
+    AUTHORIZATION_REPLAY_DETECTED = "AUTHORIZATION_REPLAY_DETECTED"
+    AUTHORIZATION_EXPIRED = "AUTHORIZATION_EXPIRED"
+    AUTHORIZATION_NOT_ACTIVE = "AUTHORIZATION_NOT_ACTIVE"
+    AUTHORIZATION_NOT_FOUND = "AUTHORIZATION_NOT_FOUND"
 
 
 # --------------------------------------------------------------------------- #
@@ -202,6 +230,10 @@ class NormalizedOffer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     offer_id: uuid.UUID = Field(default_factory=new_uuid)
+    # Server-computed content fingerprint of this offer's security-relevant
+    # values (Phase 3). Bound into the transaction digest, so a merchant that
+    # edits its offer after approval cannot keep the authorization valid.
+    offer_version: str
     merchant_id: str
     claimed_merchant_id: str
     merchant_name: str
@@ -228,6 +260,10 @@ class PolicyDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: PolicyOutcome
+    # Version of the deterministic ruleset that produced this decision. Bound
+    # into the transaction digest so an approval cannot be carried across a
+    # policy change (Phase 3).
+    policy_version: str
     reason_codes: list[ReasonCode] = Field(default_factory=list)
     requested_amount: int | None = None
     soft_budget: int
