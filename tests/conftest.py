@@ -20,14 +20,22 @@ import pytest
 import pytest_asyncio
 from apps.api.db import models  # noqa: F401  (register metadata)
 from apps.api.db.base import Base
+from apps.api.db.session import configure_sqlite_transactions
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 
 @pytest_asyncio.fixture
 async def engine():
-    eng = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    # configure_sqlite_transactions is not a test nicety: without it the sqlite3
+    # driver manages transactions itself, ROLLBACK is a no-op, and SAVEPOINT
+    # does not isolate. Every rollback/atomicity assertion below would pass
+    # vacuously. See apps/api/db/session.py for the full explanation.
+    eng = configure_sqlite_transactions(
+        create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    )
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield eng
@@ -102,7 +110,23 @@ async def concurrent_sessionmaker(tmp_path):
     a double-consume race requires.
     """
     url = f"sqlite+aiosqlite:///{tmp_path / 'pactra-concurrency.db'}"
-    eng = create_async_engine(url, future=True, poolclass=NullPool)
+    eng = configure_sqlite_transactions(create_async_engine(url, future=True, poolclass=NullPool))
+
+    # WAL + a busy timeout is the closest SQLite gets to concurrent readers and
+    # a writer. It is still NOT PostgreSQL: SQLite locks the whole database for
+    # writing, so when two sessions each hold an open transaction, the loser is
+    # refused by SQLite's own concurrency control (OperationalError) rather than
+    # by the conditional UPDATE matching zero rows. Exactly one writer still
+    # wins — the safety invariant holds — but the REASON differs, which is
+    # precisely why Phase 4 proves the payment concurrency properties against a
+    # real PostgreSQL server (tests/test_postgres_concurrency.py).
+    @event.listens_for(eng.sync_engine, "connect")
+    def _concurrency_pragmas(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
+
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield async_sessionmaker(eng, expire_on_commit=False)
@@ -224,3 +248,84 @@ async def make_mission(session, state: str = "POLICY_CHECKED"):
     session.add(mission)
     await session.flush()
     return mission
+
+
+# --------------------------------------------------------------------------- #
+# Phase 4 — PostgreSQL fixtures
+# --------------------------------------------------------------------------- #
+@pytest_asyncio.fixture(scope="session")
+async def pg_engine():
+    """One engine and one schema for the whole PostgreSQL suite.
+
+    Skips — loudly, with instructions — when no server is reachable. A
+    concurrency guarantee that was not exercised must never be reported as one
+    that was, so this never degrades to SQLite behind the caller's back.
+    """
+    from tests.pg import SKIP_REASON, ensure_database, make_engine
+
+    if not await ensure_database():
+        pytest.skip(SKIP_REASON, allow_module_level=True)
+
+    engine = make_engine()
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception:  # pragma: no cover - server vanished between calls
+        await engine.dispose()
+        pytest.skip(SKIP_REASON, allow_module_level=True)
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def pg_sessionmaker(pg_engine):
+    """Per-test clean database, with connection-level concurrency available."""
+    from tests.pg import sessionmaker_for, truncate_all
+
+    await truncate_all(pg_engine)
+    return sessionmaker_for(pg_engine)
+
+
+@pytest_asyncio.fixture
+async def pg_session(pg_sessionmaker):
+    async with pg_sessionmaker() as s:
+        yield s
+
+
+# --------------------------------------------------------------------------- #
+# Phase 4 — payment fixtures
+# --------------------------------------------------------------------------- #
+async def authorized_mission(session, *, amount_inr: int = 3799, quantity: int = 1, **overrides):
+    """A mission in AUTHORIZED with an ACTIVE authorization bound to a transaction.
+
+    This is the precondition every payment test starts from, built through the
+    REAL kernel path — issue then activate — so the authorization a payment
+    consumes is indistinguishable from one a live mission produced.
+
+    Returns (mission, authorization_row, bound_transaction).
+    """
+    from packages.schemas.capability import security_kernel_capabilities
+    from services.security_kernel.authorization import (
+        activate_authorization,
+        generate_nonce,
+        issue_authorization,
+    )
+
+    mission = await make_mission(session, state="POLICY_CHECKED")
+    txn = approved_transaction(
+        amount_inr=amount_inr,
+        quantity=quantity,
+        expires_at=FIXED_EXPIRY,
+        nonce=generate_nonce(),
+        **overrides,
+    )
+    row = await issue_authorization(
+        session,
+        capabilities=security_kernel_capabilities(),
+        mission_id=mission.id,
+        transaction=txn,
+    )
+    await activate_authorization(session, authorization_id=row.authorization_id)
+    mission.state = "AUTHORIZED"
+    await session.flush()
+    return mission, row, txn

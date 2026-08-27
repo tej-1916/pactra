@@ -1,0 +1,131 @@
+"""The ``PaymentProvider`` protocol and its error vocabulary.
+
+Orchestration depends on THIS module and never on a concrete provider. That is
+not stylistic: the reliability invariants — at most one logical payment, safe
+retry, recoverable uncertainty — are properties of the executor, and they are
+only credible if they can be proven against a provider whose faults are
+deterministic. ``FakePaymentProvider`` exists to make them provable; Razorpay
+is added only after they hold.
+
+The error taxonomy is the contract that matters most:
+
+``ProviderTimeout``
+    The call did not complete. **The provider may or may not have created a
+    payment.** This is not a failure — it is an absence of information, and the
+    executor must treat it as uncertainty rather than as either outcome.
+
+``ProviderTransientError``
+    The provider answered, and the answer was "not now". No payment was
+    created. Retrying is safe.
+
+``ProviderTerminalError``
+    The provider answered, and the answer was "no". Retrying cannot change it.
+
+Conflating the first with either of the others is the classic duplicate-charge
+bug: treat a timeout as a failure and you re-create a payment that already
+exists; treat it as a success and you record money moved that never did.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+from packages.schemas.payment import (
+    PaymentRequest,
+    ProviderPayment,
+    VerifiedWebhookEvent,
+)
+
+
+class ProviderError(Exception):
+    """Base class for every provider-side failure."""
+
+    reason_code = "PROVIDER_ERROR"
+
+    def __init__(self, provider: str, detail: str) -> None:
+        super().__init__(f"{self.reason_code}: {detail}")
+        self.provider = provider
+        self.detail = detail
+
+
+class ProviderTimeout(ProviderError):
+    """The call did not complete. Whether a payment was created is UNKNOWN.
+
+    The executor must never resolve this by guessing. It records the payment as
+    uncertain and lets reconciliation ask the provider what actually happened.
+    """
+
+    reason_code = "PAYMENT_PROVIDER_TIMEOUT"
+
+
+class ProviderTransientError(ProviderError):
+    """The provider refused for a reason that may not hold on a retry."""
+
+    reason_code = "PROVIDER_TRANSIENT_FAILURE"
+
+
+class ProviderTerminalError(ProviderError):
+    """The provider refused permanently. A retry cannot succeed."""
+
+    reason_code = "PROVIDER_TERMINAL_FAILURE"
+
+
+class ProviderPaymentMismatch(ProviderError):
+    """A provider response does not describe the intent PACTRA requested.
+
+    A successful HTTP response is still untrusted input.  A mismatched amount,
+    currency, provider, or idempotency key is evidence that a provider payment
+    may exist, but it is not evidence that the approved payment succeeded.
+    Callers must keep the intent uncertain and reconcile; they must never link
+    or settle from this response.
+    """
+
+    reason_code = "PROVIDER_RESPONSE_MISMATCH"
+
+
+@runtime_checkable
+class PaymentProvider(Protocol):
+    """The only surface through which PACTRA may reach a payment rail."""
+
+    #: Short provider name, persisted on the intent and used to route webhooks.
+    name: str
+
+    async def create_payment(self, request: PaymentRequest) -> ProviderPayment:
+        """Create (or idempotently return) the payment for ``request``.
+
+        Implementations MUST treat ``request.idempotency_key`` as the provider's
+        own idempotency key where the provider supports one, so that a repeated
+        call returns the SAME payment instead of creating a second. Where a
+        provider does not support it, the adapter must document the gap rather
+        than pretend the guarantee exists.
+
+        Raises ``ProviderTimeout`` / ``ProviderTransientError`` /
+        ``ProviderTerminalError`` per the taxonomy in this module's docstring.
+        """
+        ...
+
+    async def get_payment(
+        self,
+        *,
+        provider_payment_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> ProviderPayment | None:
+        """Look a payment up by provider id or by idempotency key.
+
+        Lookup BY IDEMPOTENCY KEY is what makes a lost response recoverable: it
+        is the only handle PACTRA still holds after a create call whose response
+        never arrived. Returns ``None`` when the provider holds no such payment
+        — the one answer that makes re-creating it safe.
+        """
+        ...
+
+    def verify_webhook(self, *, body: bytes, signature: str) -> VerifiedWebhookEvent:
+        """Verify a raw webhook body and parse it.
+
+        MUST recompute the MAC over the RAW body with a constant-time compare,
+        and MUST raise ``WebhookVerificationError`` before parsing anything as
+        state. Returning a ``VerifiedWebhookEvent`` is the adapter asserting the
+        signature checked out; the handler accepts no other input type, so an
+        unverified payload has no path into state.
+        """
+        ...

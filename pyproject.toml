@@ -23,6 +23,10 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
     "hypothesis>=6.100",
+    # Sync driver for Alembic against PostgreSQL. psycopg 3 rather than
+    # psycopg2: psycopg2 publishes no wheel for the Python version this
+    # project targets, and v3 is the maintained successor.
+    "psycopg[binary]>=3.1",
 ]
 
 [build-system]
@@ -37,8 +41,12 @@ exclude = ["infra*", "docs*", "tests*", "scripts*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "postgres: integration test requiring a real PostgreSQL server (Phase 4)",
+]
 
 [tool.ruff]
 line-length = 100

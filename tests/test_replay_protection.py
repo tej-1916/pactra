@@ -22,6 +22,7 @@ from services.security_kernel.authorization import (
     issue_authorization,
     load_authorization,
 )
+from sqlalchemy.exc import OperationalError
 from tests.conftest import approved_transaction, make_mission
 
 pytestmark = pytest.mark.asyncio
@@ -234,8 +235,16 @@ async def test_two_racing_requests_cannot_both_consume(concurrent_sessionmaker):
 
     Both "requests" load the authorization and observe ACTIVE *before* either
     writes — precisely the interleaving where an in-memory `if not consumed:`
-    check lets both through. Because the decision is a single conditional UPDATE
-    whose WHERE clause requires the row to still be ACTIVE, exactly one wins.
+    check lets both through. Exactly one may consume.
+
+    SQLITE vs POSTGRESQL. On PostgreSQL the loser blocks on the row lock, then
+    re-evaluates the WHERE clause and matches zero rows, so it is refused with
+    AUTHORIZATION_REPLAY_DETECTED. SQLite locks the WHOLE DATABASE for writing,
+    so when both sessions hold open transactions the loser is refused by
+    SQLite's own concurrency control instead. Either refusal is safe and the
+    invariant — at most one consumer — is identical; only the reason differs.
+    This test therefore asserts the invariant, and
+    tests/test_postgres_concurrency.py asserts the exact PostgreSQL semantics.
     """
     async with concurrent_sessionmaker() as setup:
         mission = await make_mission(setup)
@@ -260,26 +269,28 @@ async def test_two_racing_requests_cannot_both_consume(concurrent_sessionmaker):
         assert seen_b.status == AuthorizationStatus.ACTIVE.value
 
         outcomes = []
-        try:
-            await consume_authorization(
-                a, authorization_id=authorization_id, transaction=txn, now=NOW
-            )
-            await a.commit()
-            outcomes.append("ok")
-        except AuthorizationFailure as failure:
-            outcomes.append(failure.reason_code)
-
-        try:
-            await consume_authorization(
-                b, authorization_id=authorization_id, transaction=txn, now=NOW
-            )
-            await b.commit()
-            outcomes.append("ok")
-        except AuthorizationFailure as failure:
-            outcomes.append(failure.reason_code)
+        for s in (a, b):
+            try:
+                await consume_authorization(
+                    s, authorization_id=authorization_id, transaction=txn, now=NOW
+                )
+                await s.commit()
+                outcomes.append("ok")
+            except AuthorizationFailure as failure:
+                await s.rollback()
+                outcomes.append(failure.reason_code)
+            except OperationalError:
+                # SQLite refused the write outright. A refusal is a refusal.
+                await s.rollback()
+                outcomes.append("DATABASE_REFUSED_WRITE")
 
     assert outcomes.count("ok") == 1, f"expected exactly one winner, got {outcomes}"
-    assert "AUTHORIZATION_REPLAY_DETECTED" in outcomes
+    assert outcomes[0] == "ok" or outcomes[1] == "ok"
+    loser = [o for o in outcomes if o != "ok"]
+    assert loser and loser[0] in {
+        "AUTHORIZATION_REPLAY_DETECTED",
+        "DATABASE_REFUSED_WRITE",
+    }, f"the loser must be refused, got {loser}"
 
     async with concurrent_sessionmaker() as check:
         final = await load_authorization(check, authorization_id)
@@ -369,8 +380,20 @@ async def test_a_stale_in_memory_copy_cannot_consume(concurrent_sessionmaker):
 
         # The in-memory copy still claims ACTIVE...
         assert stale.status == AuthorizationStatus.ACTIVE.value
-        # ...and it still cannot consume.
-        with pytest.raises(AuthorizationReplayDetected):
+        # ...and it still cannot consume. On PostgreSQL the refusal is
+        # AUTHORIZATION_REPLAY_DETECTED (asserted exactly in
+        # tests/test_postgres_concurrency.py); on SQLite the write is refused by
+        # the database's own locking. What must hold on both is that the stale
+        # object grants nothing.
+        with pytest.raises((AuthorizationReplayDetected, OperationalError)):
             await consume_authorization(
                 a, authorization_id=authorization_id, transaction=txn, now=NOW
             )
+        await a.rollback()
+
+    async with concurrent_sessionmaker() as check:
+        final = await load_authorization(check, authorization_id)
+        assert final is not None
+        assert final.status == AuthorizationStatus.CONSUMED.value
+        # Consumed once, by B — never twice.
+        assert final.consumed_at is not None

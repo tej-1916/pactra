@@ -24,8 +24,16 @@ target_metadata = Base.metadata
 
 
 def _sync_url() -> str:
+    """The configured async URL, rewritten to its synchronous driver.
+
+    Alembic runs migrations synchronously, so the async driver has to be
+    swapped out. PostgreSQL maps to psycopg 3 (``+psycopg``) rather than
+    psycopg2: psycopg2 publishes no wheel for the Python version this project
+    targets, and psycopg 3 is the maintained successor. SQLite's ``+aiosqlite``
+    drops to the stdlib driver.
+    """
     url = get_settings().database_url
-    return url.replace("+asyncpg", "+psycopg2").replace("+aiosqlite", "")
+    return url.replace("+asyncpg", "+psycopg").replace("+aiosqlite", "")
 
 
 def run_migrations_offline() -> None:

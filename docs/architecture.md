@@ -268,19 +268,129 @@ Audit events for the lifecycle: `AUTHORIZATION_CREATED`,
 to correlate events across a mission, not enough to be a copy of the artifact —
 and never the nonce.
 
-## Payment reliability (transactional outbox)
+## Payment reliability (implemented, Phase 4)
 
 Side effects are made reliable without unnecessary distributed complexity:
 
 ```text
-DB TRANSACTION { PaymentIntent, AuditEvent, OutboxEvent } → COMMIT
-      → Worker → Payment Provider
+DB TRANSACTION { PaymentIntent, AuthorizationConsume, AuditEvent, OutboxEvent }
+      → COMMIT → Worker (separate process) → Payment Provider
 ```
 
-Combined with an idempotency key (`payment_intents.idempotency_key UNIQUE`) and
+The outbox row is written in the SAME transaction as the intent, so after
+COMMIT the instruction to call the provider is exactly as durable as the
+decision to pay. Combined with `payment_intents.idempotency_key UNIQUE` and
 `provider_payment_id UNIQUE`, retries and crashes yield at most one logical
-payment. Webhooks are signature-verified; duplicate and delayed webhooks are
-handled idempotently; reconciliation closes the loop.
+payment.
+
+### The uncertain state is a first-class state
+
+`PROVIDER_PENDING` exists because a provider timeout is not a failure — it is an
+absence of information. A payment may or may not have been created. Resolving
+that by guessing is the duplicate-charge bug in one direction and the
+phantom-settlement bug in the other, so it is not resolved by guessing at all:
+
+```text
+PROCESSING --timeout--> PROVIDER_PENDING --reconcile--> SUCCEEDED
+                                                      | FAILED_TERMINAL
+                                                      | FAILED_RETRYABLE
+```
+
+`FAILED_RETRYABLE` is reachable from `PROVIDER_PENDING` through exactly one
+route: a provider that positively reports holding no payment for the key. No
+elapsed timer and no attempt count promotes an uncertain payment back to
+retryable, because neither is evidence about whether money moved.
+
+### Never a blind retry
+
+Before every create attempt the executor looks the durable idempotency key up at
+the provider. A found payment is validated and adopted without a second create;
+a positively-empty answer makes creation safe; a *failed* lookup keeps the
+intent uncertain and never falls through to create. This does not assume the
+provider deduplicates creates — a deliberately non-idempotent test provider is
+used so provider-side idempotency cannot mask a PACTRA blind-retry bug.
+
+### A provider response may report state, never redefine the transaction
+
+Provider responses are untrusted input even when the HTTP status is 200. Each is
+checked against the durable intent — provider, amount, currency, idempotency key
+— BEFORE `provider_payment_id` is linked and before any terminal transition. A
+mismatch raises `PROVIDER_RESPONSE_MISMATCH`: nothing is linked, nothing is
+settled, and the intent stays uncertain pending reconciliation.
+
+The key check is strictest where correlation is weakest. While no provider
+payment is linked, the idempotency key is the ONLY thing tying a response to
+this intent, so a response omitting it — or naming a different key — is refused.
+A payment with a coincidentally matching amount and currency must never be
+adopted; settling against another party's charge is worse than a duplicate.
+Once an id IS linked, the id is the correlation, and `link_provider_payment`
+raises rather than relinking a different one — overwriting would hide a
+duplicate and leave the first charge unreferenced.
+
+### Worker claim/work split
+
+Claiming and handling run in SEPARATE transactions:
+
+```text
+TX 1  claim event, persist IN_PROGRESS lease + attempt count   COMMIT
+TX 2  provider I/O, persist local result, acknowledge event    COMMIT
+```
+
+A crash during provider I/O leaves a durable `IN_PROGRESS` lease rather than
+rolling the claim back to an indistinguishable `PENDING`. Recovery is the lease
+lapsing, so crash recovery falls out of the same field that schedules retries
+instead of needing a reaper. The cost is that a slow dispatch can be re-claimed
+while still running, which is why every handler is idempotent regardless.
+
+Dead-lettering marks the outbox row `FAILED` but deliberately does NOT make the
+payment intent terminal: "automatic recovery gave up" is a weaker claim than
+"this payment definitively failed", and only the weaker one is supported.
+
+### Webhooks
+
+Verify (HMAC over RAW bytes, constant-time) → resolve the payment from
+server-side state by `provider_payment_id` → deduplicate on
+`UNIQUE(provider, provider_event_id)` → apply only what the state machine
+permits. The webhook supplies a pointer, never an amount, merchant, or
+authorization, so a verified-but-hostile webhook cannot restate what a payment
+was for. Conflicting concurrent webhooks serialize on a `SELECT … FOR UPDATE` of
+the intent row, so exactly one terminal transition applies.
+
+A rejected signature is NOT audited. The ledger is mission-scoped and the only
+thing naming a mission in a rejected delivery is the payload whose MAC just
+failed; writing the event would mean picking a chain on the authority of a
+forged body. A transport-scoped security log is the right home for rejections
+and Phase 4 does not build one — so no code or comment claims a rejection event
+exists.
+
+### Audit sequence under concurrency
+
+`append_event` takes a `SELECT … FOR UPDATE` on the mission row before
+allocating a sequence. The `UNIQUE(mission_id, sequence)` constraint catches
+duplicates, but only the row lock makes concurrent legitimate appends wait and
+then observe the sequence the prior writer committed, keeping the chain
+contiguous and its `previous_hash` links valid.
+
+### Capability enforcement at privileged boundaries
+
+Both privileged boundaries — `authorization.issue` and `payment.execute` — go
+through `enforce_registered`, which re-resolves the principal against the
+server-owned registry and requires the presented set to EQUAL it. A
+`CapabilitySet` is a plain Pydantic schema, so untrusted code can construct one
+that merely claims a capability; validating that claim against itself would make
+the guard self-certifying. Principal authentication remains the trusted caller's
+responsibility — the worker selects its principal internally, and no HTTP route
+accepts one.
+
+### Backend differences, stated rather than papered over
+
+SQLite serializes writers with a database-wide lock and ignores `FOR UPDATE`; a
+concurrency test there is refused by the database rather than by the code under
+test. PostgreSQL is therefore AUTHORITATIVE for concurrent authorization
+consumption, concurrent same-key creation, idempotency conflicts, payment row
+locking, webhook races, `SKIP LOCKED` outbox claiming, and audit sequence
+serialization. Those tests skip loudly when no server is reachable. No
+production behaviour is weakened to make SQLite reproduce PostgreSQL semantics.
 
 ## Event history + replay
 

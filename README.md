@@ -114,7 +114,8 @@ Phase 2  Security-kernel primitives: provenance, taint,
          authority lattice, capability firewall                 [DONE]
 Phase 3  Transaction binding + authorization + replay protection [DONE]
 Phase 4  Payment reliability: FakeProvider, idempotency, outbox,
-         webhook verification, fault injection; then Razorpay test
+         webhook verification, fault injection; Razorpay test  [DONE,
+         Razorpay adapter partial — see below]
 Phase 5  Audit /verify endpoint + corruption test + event replay
 Phase 6  Adversarial Attack Lab + evaluation harness (real metrics)
 Phase 7  Risk/anomaly engine (advisory only; ML optional)
@@ -312,3 +313,237 @@ model, no Attack Lab. No cryptographic signing of any kind — neither user
 authorization signatures nor merchant authentication (mutual TLS / signed
 merchant assertions remain unimplemented, despite Phase 2 having anticipated
 them here).
+
+---
+
+## Phase 4 — payment reliability (implemented)
+
+Phase 4 is where money can finally move, and therefore where the interesting
+question is not "does a payment succeed?" but **"can the system be made to pay
+twice, pay the wrong thing, or claim a payment it did not make?"** Every
+mechanism below exists to answer no to one of those.
+
+### The path from an approved mission to a provider call
+
+```text
+POST /missions/{id}/payment          (Idempotency-Key: required)
+      │  no amount, no merchant, no capability set — there are no such fields
+      ▼
+ONE DB TRANSACTION
+  INSERT payment_intents          UNIQUE(idempotency_key) decides same-key races
+  consume_authorization(...)      Phase 3 atomic conditional UPDATE
+  INSERT audit_events             PAYMENT_INTENT_CREATED / PAYMENT_QUEUED
+  INSERT outbox_events            PAYMENT_CREATE_REQUESTED
+COMMIT
+      ▼
+python -m services.payment_executor.run_worker      (a SEPARATE process)
+      ▼
+PaymentProvider  →  FakePaymentProvider | RazorpayTestPaymentProvider (partial)
+```
+
+**No HTTP request ever reaches a payment provider.** The route commits a durable
+intent and returns; the provider is reached only from the outbox worker, which
+is a different process on purpose. That is what makes `LLM → Razorpay`
+structurally impossible rather than merely discouraged.
+
+### The payment state machine
+
+```text
+CREATED → QUEUED → PROCESSING ─┬─→ SUCCEEDED          (terminal)
+                               ├─→ FAILED_TERMINAL    (terminal)
+                               ├─→ FAILED_RETRYABLE ──→ QUEUED
+                               └─→ PROVIDER_PENDING   (the UNCERTAIN state)
+
+PROVIDER_PENDING → SUCCEEDED | FAILED_TERMINAL | FAILED_RETRYABLE
+```
+
+`PROVIDER_PENDING` is the whole design. A provider timeout is **not** a failure
+— it is an absence of information, and a payment may or may not exist. Treating
+it as failure re-creates a payment that already exists; treating it as success
+records money that never moved. So it becomes uncertainty, and only
+reconciliation resolves it.
+
+`FAILED_RETRYABLE` is reachable from `PROVIDER_PENDING` through exactly one
+route: a provider that positively reports holding **no** payment for the key.
+No timer, no elapsed time, and no attempt count promotes an uncertain payment
+back to retryable, because none of those is evidence about whether money moved.
+
+### Never a blind retry
+
+Before **every** create attempt the executor asks the provider what it holds for
+the durable idempotency key:
+
+```text
+lookup succeeds, payment found     → validate, adopt it, DO NOT create
+lookup succeeds, nothing found     → safe to create; no duplicate is possible
+lookup FAILS                       → stay uncertain, reconcile later,
+                                     NEVER fall through to create
+```
+
+This deliberately does not rely on the provider deduplicating creates.
+`NonIdempotentFakePaymentProvider` — a provider that creates a brand-new payment
+on every create call — is used in the crash-recovery tests precisely so
+provider-side idempotency cannot hide a PACTRA blind-retry bug.
+
+### A provider response may report state, never redefine the transaction
+
+Every provider response is validated against the durable intent — `provider`,
+`amount_inr`, `currency`, and the idempotency key — *before* the provider id is
+linked and *before* any success/failure transition. A mismatch raises
+`PROVIDER_RESPONSE_MISMATCH`, which:
+
+* does **not** link `provider_payment_id`,
+* does **not** mark the intent succeeded,
+* leaves the intent uncertain and schedules reconciliation.
+
+The key check is strictest exactly where it matters most. While no provider
+payment is linked yet, the idempotency key is the **only** thing tying a
+response to this intent, so a response that omits it — or names a different one
+— is refused outright. A payment with a coincidentally equal amount and currency
+must never be adopted as ours; settling against someone else's charge would be
+worse than a duplicate. Once an id **is** linked, correlation is established by
+that id, and `link_provider_payment` refuses to relink a different one.
+
+### Webhooks
+
+```text
+1. verify HMAC over the RAW bytes   (constant-time compare)
+2. resolve the payment by provider_payment_id   (server-side; the webhook
+                                                 supplies a pointer, never an
+                                                 amount, merchant, or authorization)
+3. deduplicate on UNIQUE(provider, provider_event_id)
+4. apply ONLY what the state machine permits
+```
+
+Duplicate → the unique index refuses the second insert. Delayed → terminal
+states have no outgoing transitions. Out-of-order → the transition table, not
+the arrival order, decides. Conflicting concurrent webhooks → both serialize on
+a `SELECT ... FOR UPDATE` of the intent row, so exactly one terminal transition
+applies and the loser is recorded as out-of-order.
+
+**An invalid signature is NOT audited, and the code says so.** The audit ledger
+is mission-scoped, and the only thing naming a mission in a rejected delivery is
+the payload whose signature just failed. Writing that event would mean choosing
+a mission chain on the authority of a forged body. A transport-scoped security
+log is the right home for rejections; Phase 4 does not build one, and nothing in
+the code or comments claims otherwise.
+
+### Transactional outbox and the worker
+
+The outbox row is written in the *same* transaction as the payment intent, so
+after `COMMIT` the instruction to call the provider is exactly as durable as the
+decision to pay. Claiming is dialect-appropriate rather than pretended-portable:
+`SELECT … FOR UPDATE SKIP LOCKED` on PostgreSQL, an atomic conditional UPDATE
+decided by `rowcount` elsewhere. Neither uses a read-then-write in Python.
+
+The worker uses **two transactions**, and the split is the crash-recovery story:
+
+```text
+TX 1   claim the event, persist IN_PROGRESS + the attempt   COMMIT
+TX 2   do the provider work, persist result, acknowledge    COMMIT
+```
+
+A crash during provider I/O therefore leaves a durable `IN_PROGRESS` lease
+rather than rolling the claim back to an indistinguishable `PENDING`. Recovery
+is the lease lapsing — no separate reaper — and the cost is that a slow dispatch
+may be re-claimed while still running, which is why every handler is idempotent
+regardless.
+
+Dead-lettering sets the outbox row to `FAILED` and stops the worker spinning. It
+deliberately does **not** make the payment intent terminal: "automatic recovery
+gave up" is not the same claim as "this payment definitively failed", and
+recording the stronger claim would be recording something unverified.
+
+### Separation of duties
+
+```text
+security-kernel   may issue authorizations, DENIED payment.execute
+payment-executor  may execute payments,     DENIED authorization.issue
+buyer-agent       (what an LLM acts through) DENIED both
+```
+
+The component that can *create* an authorization cannot *spend* it. Both
+privileged boundaries enforce through `enforce_registered`, which re-resolves
+the principal against the server-owned registry and requires the presented set
+to equal it. A `CapabilitySet` is a plain schema, so untrusted code can build
+one that simply claims a capability; checking that claim against itself would
+make the guard self-certifying.
+
+### SQLite vs PostgreSQL — stated honestly
+
+SQLite runs the fast unit suite. It is **not** where the concurrency guarantees
+are proven, and it is not treated as if it were:
+
+| | SQLite | PostgreSQL |
+|---|---|---|
+| Writer model | one database-wide writer lock | row-level locks + MVCC |
+| `FOR UPDATE` | accepted and ignored | a real row lock |
+| `SKIP LOCKED` | unavailable — conditional UPDATE fallback | used as intended |
+| A losing racer | often refused by SQLite's lock | refused by the code under test |
+
+A "concurrency" test on SQLite runs under a regime that removes most of the
+concurrency, so the loser is refused by the database rather than by the logic
+being tested. **PostgreSQL is authoritative** for concurrent authorization
+consumption, concurrent same-key creation, idempotency conflicts, payment row
+locking, webhook races, `SKIP LOCKED` outbox claiming, and audit sequence
+serialization. Those tests skip loudly if no server is reachable — a guarantee
+that was not exercised must never look like one that was:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d
+pytest -m postgres            # 14 PostgreSQL concurrency tests
+```
+
+No production behaviour is weakened to make SQLite imitate PostgreSQL.
+
+### Razorpay — `partial`, and not claimed as more
+
+The adapter is test-mode only: a non-`rzp_test_` key is refused in `__init__`,
+before it can be stored in an attribute. Secrets come from the environment with
+no source-code fallback, and `__repr__` is redacted by construction.
+
+What is genuinely implemented and tested offline: the test-mode guard and
+webhook signature verification (`X-Razorpay-Signature` = hex HMAC-SHA256 of the
+raw body, per Razorpay's documentation). Three limitations, stated as gaps:
+
+1. **Razorpay does not document receipt uniqueness.** PACTRA sends its
+   idempotency key as the Order `receipt` and reconciles via
+   `GET /v1/orders?receipt=…`. That is a *correlation handle*, not provider-side
+   idempotency, and it is not claimed as such. Duplicate prevention rests
+   entirely on PACTRA's own `UNIQUE(idempotency_key)` and the
+   PROVIDER_PENDING/reconciliation path — which is why those were built without
+   assuming provider help. If a receipt search returns more than one order, the
+   adapter **refuses** rather than adopting one arbitrarily: two orders for one
+   receipt is the duplicate this phase exists to detect, and picking the first
+   would resolve the lookup by discarding the evidence.
+2. **An Order is not a Payment.** The server-side API creates an Order; the
+   Payment appears when a customer completes Checkout. A complete end-to-end
+   Razorpay payment needs a Checkout front end, which Phase 4 does not build.
+3. **The HTTP paths have not been exercised against the live Razorpay API.**
+   They are tested against a stub client, which proves this adapter's
+   *interpretation* of a response — not that Razorpay replies that way.
+
+Provider-independent reliability, proven against `FakePaymentProvider`, is the
+deliverable. Razorpay is an adapter over it.
+
+### Endpoints added
+
+```text
+POST /api/v1/missions/{id}/payment    # 201 created / 200 already existed
+                                      # requires Idempotency-Key
+GET  /api/v1/missions/{id}/payment    # reports PROVIDER_PENDING as itself
+POST /api/v1/webhooks/{provider}      # raw body + provider signature header
+```
+
+```bash
+python -m services.payment_executor.run_worker --provider fake
+```
+
+### Not implemented in Phase 4
+
+No audit `/verify` endpoint or mission replay (Phase 5), no Attack Lab or
+evaluation harness (Phase 6), no risk engine (Phase 7), no protocol adapters
+(Phase 8), no frontend (Phase 9). No cryptographic signing of user
+authorizations and no cryptographic merchant authentication — both remain
+unimplemented, as in Phase 3. No transport-scoped security log for rejected
+webhooks.

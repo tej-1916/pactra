@@ -53,7 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.audit_ledger.ledger import append_event
 from services.security_kernel.binding import digests_match
-from services.security_kernel.capability import enforce
+from services.security_kernel.capability_registry import enforce_registered
 
 ACTOR = "security-kernel"
 
@@ -183,6 +183,41 @@ async def _audit(
     )
 
 
+def rebuild_bound_transaction(row: AuthorizationRow) -> BoundTransaction:
+    """Reconstruct the approved transaction from SERVER-HELD state alone.
+
+    This exists so a payment request never has to carry a transaction, and
+    therefore can never carry a forged one. Every input is a column the kernel
+    wrote at issuance — the ``bound_*`` fields, both version stamps, the expiry,
+    and the nonce, which is server-held entropy that has never left the kernel
+    and is not obtainable by any caller.
+
+    The reconstruction is verified, not assumed: the digest is recomputed and
+    compared against the digest recorded at approval time. A mismatch means the
+    stored row itself no longer describes what was approved (corruption, or a
+    bound column written by some path that should not exist), and it raises
+    rather than proceeding — a payment must never be executed against a
+    transaction the kernel cannot re-derive.
+    """
+    transaction = BoundTransaction(
+        merchant_id=row.bound_merchant_id,
+        product_id=row.bound_product_id,
+        quantity=row.bound_quantity,
+        amount_inr=row.bound_amount_inr,
+        currency=row.bound_currency,
+        policy_version=row.policy_version,
+        offer_version=row.offer_version,
+        expires_at=as_utc(row.expires_at),
+        nonce=row.nonce,
+    )
+    require(
+        digests_match(row.transaction_digest, transaction),
+        "authorization.rebuilt_transaction_matches_digest",
+        f"authorization {row.authorization_id} does not re-derive to its recorded digest",
+    )
+    return transaction
+
+
 # --------------------------------------------------------------------------- #
 # Lifecycle
 # --------------------------------------------------------------------------- #
@@ -200,8 +235,17 @@ async def issue_authorization(
     principal is explicitly denied. A compromised agent therefore cannot mint an
     authorization: enforcement happens before anything is written, so no row
     exists on a denied call.
+
+    Enforcement goes through ``enforce_registered``, not the raw capability
+    check. ``CapabilitySet`` is a plain schema, so untrusted code can construct
+    one that simply *claims* ``authorization.issue``; checking that claim
+    against itself would make the guard self-certifying. The registry is
+    re-consulted for the named principal and the presented set must equal the
+    server-owned one, so a forged grant is refused before the digest is even
+    computed. This is what keeps **LLM OUTPUT -> NEVER AUTHORIZATION**
+    structural rather than merely conventional.
     """
-    enforce(capabilities, Capability.AUTHORIZATION_ISSUE)
+    enforce_registered(capabilities, Capability.AUTHORIZATION_ISSUE)
 
     now = as_utc(issued_at or utcnow())
     require(

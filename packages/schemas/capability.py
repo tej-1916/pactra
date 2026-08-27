@@ -77,3 +77,36 @@ def security_kernel_capabilities(principal: str = "security-kernel") -> Capabili
             Capability.MERCHANT_MODIFY,
         },
     )
+
+
+def payment_executor_capabilities(principal: str = "payment-executor") -> CapabilitySet:
+    """The ONLY principal permitted to execute a payment (Phase 4).
+
+    ``payment.execute`` is deliberately held by nobody else. It is denied to
+    ``buyer-agent`` — the principal an LLM or a compromised agent acts through —
+    and also denied to ``security-kernel``, which mints authorizations. That
+    second denial is the important one: it means the component that can CREATE
+    an authorization cannot also SPEND it, so compromising the issuing path
+    still does not move money.
+
+    This principal is not a superuser either. It may execute and propose
+    payments; it is still denied ``authorization.issue``, so the executor cannot
+    manufacture the authorization it requires, and denied ``policy.modify`` and
+    ``merchant.modify``, so it cannot rewrite the rules it is executing under.
+    The result is a genuine separation of duties: issuing, spending, and
+    policy-setting are three different principals, and no single compromise
+    spans them.
+    """
+    return CapabilitySet(
+        principal=principal,
+        allow={
+            Capability.PAYMENT_EXECUTE,
+            Capability.PAYMENT_PROPOSE,
+        },
+        deny={
+            Capability.AUTHORIZATION_ISSUE,
+            Capability.REFUND_EXECUTE,
+            Capability.POLICY_MODIFY,
+            Capability.MERCHANT_MODIFY,
+        },
+    )

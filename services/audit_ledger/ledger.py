@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from apps.api.db.models import AuditEventRow
+from apps.api.db.models import AuditEventRow, Mission
 from packages.schemas.domain import EventType, utcnow
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +36,12 @@ async def append_event(
     actor: str,
     payload: dict[str, Any] | None = None,
 ) -> AuditEventRow:
+    # Serialize sequence allocation per mission. The UNIQUE constraint catches
+    # duplicates, but only this row lock makes concurrent legitimate appends
+    # wait and then observe the sequence committed by the prior writer. SQLite
+    # ignores FOR UPDATE and relies on its database-wide writer lock;
+    # PostgreSQL (the authoritative concurrency backend) takes a real row lock.
+    await session.execute(select(Mission.id).where(Mission.id == mission_id).with_for_update())
     payload = payload or {}
     prev = await _last_event(session, mission_id)
     sequence = 0 if prev is None else prev.sequence + 1

@@ -83,3 +83,43 @@ class MissionOut(BaseModel):
     offers: list[OfferOut]
     policy_decision: PolicyDecisionOut | None
     created_at: datetime
+
+
+class PaymentIntentOut(BaseModel):
+    """Public projection of a payment intent.
+
+    Absent by design: ``request_fingerprint`` and the full ``transaction_digest``
+    preimage inputs. The fingerprint is what an idempotency-conflict check
+    compares against, and handing it out would let a caller probe for a
+    colliding request; the digest is shown because Phase 3 already exposes it on
+    the authorization artifact, so it discloses nothing new.
+    """
+
+    payment_intent_id: uuid.UUID
+    mission_id: uuid.UUID
+    authorization_id: uuid.UUID
+    state: str
+    idempotency_key: str
+    amount_inr: int
+    currency: str
+    merchant_id: str
+    provider: str
+    provider_payment_id: str | None
+    attempts: int
+    last_reason_code: str | None
+    created_at: datetime
+
+
+class WebhookAck(BaseModel):
+    """What PACTRA did with one webhook delivery.
+
+    ``applied`` is reported honestly: a duplicate or out-of-order delivery is
+    ACCEPTED (so the provider stops retrying) while having changed nothing.
+    Conflating the two would tell the provider a state change happened that did
+    not.
+    """
+
+    accepted: bool
+    applied: bool
+    reason_code: str | None
+    state: str | None
