@@ -14,7 +14,7 @@ def test_authoritative_is_untainted_and_high_authority():
     p = authoritative(4500, source="user-policy")
     assert p.value == 4500
     assert p.trust == TrustLevel.AUTHORITATIVE
-    assert p.authority == AuthorityLevel.USER_SIGNED_POLICY
+    assert p.authority == AuthorityLevel.USER_POLICY
     assert is_tainted(p) is False
 
 
@@ -35,6 +35,6 @@ def test_taint_is_sticky_through_transform():
 
 
 def test_authority_ordering():
-    assert AuthorityLevel.USER_SIGNED_POLICY > AuthorityLevel.AGENT_PROPOSAL
+    assert AuthorityLevel.USER_POLICY > AuthorityLevel.AGENT_PROPOSAL
     assert AuthorityLevel.AGENT_PROPOSAL > AuthorityLevel.MERCHANT_DATA
     assert agent_value(1).authority < authoritative(1).authority

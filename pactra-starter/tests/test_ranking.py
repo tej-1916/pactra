@@ -1,14 +1,10 @@
-from services.agent_orchestrator.merchants.mock_merchants import default_merchants
 from services.policy_engine.normalization import normalize_offers
 from services.policy_engine.ranking import best_offer, rank_offers
-from tests.conftest import make_constraints
+from tests.conftest import collect_quotes, make_constraints
 
 
 def _all_norms(c):
-    raws = []
-    for m in default_merchants():
-        raws.extend(m.quote(c, 1))
-    return normalize_offers(raws, c)
+    return normalize_offers(collect_quotes(c), c)
 
 
 def test_only_valid_offers_ranked():

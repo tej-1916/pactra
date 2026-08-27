@@ -63,3 +63,13 @@ def make_constraints(**overrides):
     )
     base.update(overrides)
     return MissionConstraints(**base)
+
+
+def collect_quotes(constraints, quantity=1, merchants=None, registry=None):
+    """Run merchants through the real transport so every quote carries the
+    identity the transport authenticated — the same path the orchestrator uses."""
+    from services.agent_orchestrator.merchants.mock_merchants import default_merchants
+    from services.agent_orchestrator.merchants.transport import MerchantTransport
+
+    agents = default_merchants() if merchants is None else merchants
+    return MerchantTransport(registry).collect(agents, constraints, quantity)

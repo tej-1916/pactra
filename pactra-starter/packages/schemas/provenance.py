@@ -20,14 +20,21 @@ U = TypeVar("U")
 
 
 class AuthorityLevel(IntEnum):
-    """Ordered authority lattice. Higher value = higher authority."""
+    """Ordered authority lattice. Higher value = higher authority.
+
+    ``USER_POLICY`` is deliberately NOT called "user-signed": nothing in the
+    current phase cryptographically signs a user policy. It is authoritative
+    because it is established server-side at the trusted API boundary, not
+    because it carries a verifiable signature. A ``VERIFIED_USER_POLICY`` level
+    may be introduced once Phase 3 implements real signing.
+    """
 
     MERCHANT_DATA = 10
     AGENT_PROPOSAL = 20
     TRUSTED_INTERNAL_SERVICE = 30
     AUTHORIZATION = 40
     SYSTEM_SECURITY_POLICY = 50
-    USER_SIGNED_POLICY = 60
+    USER_POLICY = 60
 
 
 class TrustLevel(str, Enum):
@@ -95,7 +102,7 @@ def authoritative(value: T, source: str = "user-policy") -> Provenanced[T]:
     return Provenanced[T](
         value=value,
         source=source,
-        authority=AuthorityLevel.USER_SIGNED_POLICY,
+        authority=AuthorityLevel.USER_POLICY,
         trust=TrustLevel.AUTHORITATIVE,
         tainted=False,
     )
@@ -106,6 +113,20 @@ def system_value(value: T, source: str = "system-policy") -> Provenanced[T]:
         value=value,
         source=source,
         authority=AuthorityLevel.SYSTEM_SECURITY_POLICY,
+        trust=TrustLevel.TRUSTED,
+        tainted=False,
+    )
+
+
+def trusted_value(value: T, source: str) -> Provenanced[T]:
+    """A value produced by a trusted internal service (e.g. the merchant
+    transport establishing an authenticated identity, or the server-owned
+    merchant registry). Not authoritative over user policy, but not merchant
+    data either — it is untainted because no untrusted party can influence it."""
+    return Provenanced[T](
+        value=value,
+        source=source,
+        authority=AuthorityLevel.TRUSTED_INTERNAL_SERVICE,
         trust=TrustLevel.TRUSTED,
         tainted=False,
     )

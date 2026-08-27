@@ -74,6 +74,7 @@ class ReasonCode(str, Enum):
     CURRENCY_NOT_ALLOWED = "CURRENCY_NOT_ALLOWED"
     OUT_OF_STOCK = "OUT_OF_STOCK"
     MERCHANT_TRUST_TOO_LOW = "MERCHANT_TRUST_TOO_LOW"
+    MERCHANT_IDENTITY_MISMATCH = "MERCHANT_IDENTITY_MISMATCH"
     # Approval reasons
     SOFT_BUDGET_EXCEEDED = "SOFT_BUDGET_EXCEEDED"
     # Allow
@@ -128,20 +129,42 @@ class CreateMissionRequest(BaseModel):
 # --------------------------------------------------------------------------- #
 # Offers
 # --------------------------------------------------------------------------- #
-class RawMerchantOffer(BaseModel):
-    """An offer exactly as returned by a (untrusted) merchant agent.
+# JSON-safe value types a merchant may attempt to claim. Deliberately a closed
+# union rather than `Any`: every rejected claim is written verbatim into the
+# hash-chained audit ledger, which must stay serializable.
+ClaimValue = int | float | bool | str | list[str] | None
 
-    `extra="ignore"` is deliberate: merchants may attempt to smuggle extra
-    fields (fake tool calls, injected instructions). Unknown fields are dropped
-    here and never reach the trusted layer. `description` is retained ONLY as
-    opaque data and is intentionally NOT propagated into NormalizedOffer.
+
+class RawMerchantOffer(BaseModel):
+    """An offer exactly as returned by an (untrusted) merchant agent.
+
+    This model carries PAYLOAD DATA ONLY. It deliberately has no field capable
+    of carrying merchant identity or merchant trust as trusted values:
+
+    * `merchant_id` is retained purely as a *claimed* identity. It is verified
+      against the transport-authenticated `MerchantIdentity` at ingress and a
+      mismatch rejects the offer (MERCHANT_IDENTITY_MISMATCH). It is never the
+      source identity for provenance, ranking, or allow/block policy.
+    * There is no `merchant_trust` field and no `merchant_name` field. Trust and
+      display name come from the server-owned `MerchantRegistry`. Because
+      `extra="ignore"` drops unknown keys, a merchant sending
+      `{"merchant_trust": 1.0}` has that key silently discarded — self-assigning
+      a trust score is structurally impossible, not merely disallowed.
+
+    `extra="ignore"` is otherwise deliberate: merchants may attempt to smuggle
+    extra fields (fake tool calls, injected instructions, forged security
+    labels). Unknown fields are dropped here and never reach the trusted layer.
+    `description` is retained ONLY as opaque data and is intentionally NOT
+    propagated into NormalizedOffer.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    merchant_id: str = Field(min_length=1, max_length=120)
-    merchant_name: str = Field(min_length=1, max_length=200)
-    merchant_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    merchant_id: str = Field(
+        min_length=1,
+        max_length=120,
+        description="CLAIMED identity — untrusted, verified against the authenticated identity",
+    )
     product_id: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=300)
     description: str = Field(default="", max_length=5000)
@@ -151,9 +174,10 @@ class RawMerchantOffer(BaseModel):
     in_stock: bool = True
     offered_at: datetime = Field(default_factory=utcnow)
     # Untrusted merchant-proposed policy overrides. A malicious merchant may try
-    # to raise the user's budget here; the kernel adjudicates every claim through
-    # the authority lattice and blocks any that target higher-authority state.
-    claims: dict[str, int] = Field(default_factory=dict)
+    # to raise the user's budget or widen its allow-list here; the kernel
+    # adjudicates every claim through the authority lattice and blocks any that
+    # target higher-authority state.
+    claims: dict[str, ClaimValue] = Field(default_factory=dict)
 
 
 class NormalizedOffer(BaseModel):
@@ -168,12 +192,18 @@ class NormalizedOffer(BaseModel):
 
     Note the absence of `description`: free-form merchant text is dropped
     entirely and never reaches ranking or policy.
+
+    `merchant_id`, `merchant_name` and `merchant_trust` here are the TRUSTED
+    values (authenticated identity + server-owned registry), never the payload's
+    claims. `claimed_merchant_id` preserves what the payload asserted so an
+    identity mismatch remains visible in persistence and audit.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     offer_id: uuid.UUID = Field(default_factory=new_uuid)
     merchant_id: str
+    claimed_merchant_id: str
     merchant_name: str
     merchant_trust: float = Field(ge=0.0, le=1.0)
     product_id: str

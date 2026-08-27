@@ -1,16 +1,12 @@
 from packages.schemas.domain import PolicyOutcome, ReasonCode
-from services.agent_orchestrator.merchants.mock_merchants import default_merchants
 from services.policy_engine import engine
 from services.policy_engine.normalization import normalize_offers
 from services.policy_engine.ranking import best_offer
-from tests.conftest import make_constraints
+from tests.conftest import collect_quotes, make_constraints
 
 
 def _best(c):
-    raws = []
-    for m in default_merchants():
-        raws.extend(m.quote(c, 1))
-    return best_offer(normalize_offers(raws, c))
+    return best_offer(normalize_offers(collect_quotes(c), c))
 
 
 def test_require_approval_when_over_soft_budget():

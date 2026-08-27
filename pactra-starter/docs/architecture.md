@@ -34,7 +34,7 @@ Explicit, ordered authority. A lower level may never mutate state owned by a
 higher level; attempts raise `AUTHORITY_ESCALATION`.
 
 ```text
-USER-SIGNED POLICY
+USER POLICY
       >  SYSTEM SECURITY POLICY
       >  AUTHORIZATION
       >  TRUSTED INTERNAL SERVICE
@@ -42,8 +42,66 @@ USER-SIGNED POLICY
       >  MERCHANT DATA
 ```
 
+The top level is named `USER_POLICY`, not "user-signed policy": it is
+authoritative because it is established server-side at the trusted API boundary,
+**not** because it carries a cryptographic signature. No signing exists yet. A
+`VERIFIED_USER_POLICY` level may be introduced when Phase 3 implements real
+signing; until then the name does not claim a guarantee the code cannot deliver.
+
 Example: merchant content asserting `budget = ₹100000` targets USER_POLICY from
 MERCHANT authority → `AUTHORITY_ESCALATION` → DENY.
+
+### Protected policy register
+
+The full set of user-policy fields held at `USER_POLICY` authority — not just
+budgets, because merchants also profit from widening the ground they are judged
+on:
+
+```text
+soft_budget_inr, hard_limit_inr, currency, min_rating,
+allowed_merchants, blocked_merchants, min_merchant_trust
+```
+
+Any merchant claim against any of these raises `AUTHORITY_ESCALATION`, is
+recorded as a `SECURITY_VIOLATION`, and leaves the authoritative value untouched.
+
+## Merchant identity and trust
+
+Merchant identity and merchant reputation are **server-owned**. They never come
+from the merchant payload:
+
+```text
+MerchantTransport   -> MerchantIdentity   (authenticated from the connection)
+MerchantRegistry    -> MerchantRecord     (display name + trust score)
+                       MerchantContext = identity + record
+```
+
+`ingest_merchant_offer(raw, context)` takes the trusted context *separately*
+from the untrusted payload. Consequences:
+
+* the provenance `source` of every merchant value is the **authenticated**
+  merchant id, never `raw.merchant_id`;
+* `merchant_trust` is read only from the registry — `RawMerchantOffer` has no
+  such field at all, so self-assigning trust is structurally impossible;
+* allow-lists, block-lists and minimum-trust checks evaluate the authenticated
+  identity, so impersonation cannot bypass them;
+* `raw.merchant_id` survives only as `claimed_merchant_id`. If it differs from
+  the authenticated identity the offer is rejected with
+  `MERCHANT_IDENTITY_MISMATCH` and a `SECURITY_VIOLATION` is appended.
+
+The orchestrator carries `AuthenticatedQuote` values (identity + that merchant's
+offers) rather than a flattened offer list, so identity is never lost between
+transport and ingress.
+
+Scope note: `IN_PROCESS_ADAPTER` authentication means identity comes from
+server-side adapter registration, not from the wire. It is **not** cryptographic
+authentication; mutual TLS / signed merchant assertions are Phase 3 work.
+
+## Invariant errors, not assertions
+
+Security invariants are enforced with `require()` raising `InvariantViolation`,
+never with `assert` — assertions are stripped under `python -O`, which would
+silently remove the check in exactly the deployment mode where it matters most.
 
 ## Provenance model
 

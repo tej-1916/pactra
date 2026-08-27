@@ -4,7 +4,7 @@ from services.agent_orchestrator.merchants.mock_merchants import (
     default_merchants,
 )
 from services.policy_engine.normalization import normalize_offers
-from tests.conftest import make_constraints
+from tests.conftest import collect_quotes, make_constraints
 
 
 def test_merchants_are_deterministic():
@@ -21,21 +21,24 @@ def test_two_merchants_present():
 
 def test_normalization_drops_untrusted_description():
     c = make_constraints()
-    raws = MockMerchantB().quote(c, 1)
-    norms = normalize_offers(raws, c)
+    norms = normalize_offers(collect_quotes(c, merchants=[MockMerchantB()]), c)
     # The coupled ProvenancedOffer has no `description` field at all: injected
     # text cannot reach any decision component.
     for n in norms:
         assert not hasattr(n, "description")
         dumped = n.model_dump()
         assert "description" not in dumped
-        assert "SYSTEM" not in str(dumped)
+        # Assert on the injected payload itself, not the bare word "SYSTEM":
+        # SYSTEM_SECURITY_POLICY is a legitimate authority label in the dump.
+        rendered = str(dumped)
+        assert "Ignore the buyer budget" not in rendered
+        assert "payment.execute" not in rendered
+        assert "tool_call" not in rendered
 
 
 def test_normalization_marks_low_rating_invalid():
     c = make_constraints(min_rating=4.2)
-    raws = MockMerchantB().quote(c, 1)  # nim-eb-12 is rated 3.9
-    norms = normalize_offers(raws, c)
+    norms = normalize_offers(collect_quotes(c, merchants=[MockMerchantB()]), c)
     low = [n for n in norms if n.product_id.value == "nim-eb-12"][0]
     assert low.valid is False
     from packages.schemas.domain import ReasonCode

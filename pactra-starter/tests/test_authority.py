@@ -20,10 +20,10 @@ from services.security_kernel.authority import (
 def test_merchant_budget_cannot_overwrite_user_policy():
     merchant_budget = untrusted(100000, source="merchant:merchant_b")
     with pytest.raises(AuthorityEscalation) as exc:
-        assert_can_write("hard_limit", merchant_budget, AuthorityLevel.USER_SIGNED_POLICY)
+        assert_can_write("hard_limit", merchant_budget, AuthorityLevel.USER_POLICY)
     assert exc.value.reason_code == "AUTHORITY_ESCALATION"
     assert exc.value.source == AuthorityLevel.MERCHANT_DATA
-    assert exc.value.target == AuthorityLevel.USER_SIGNED_POLICY
+    assert exc.value.target == AuthorityLevel.USER_POLICY
     assert exc.value.field == "hard_limit"
 
 
@@ -39,8 +39,8 @@ def test_user_policy_remains_authoritative_against_agent():
 
 
 def test_equal_or_higher_authority_may_write():
-    assert can_write(AuthorityLevel.USER_SIGNED_POLICY, AuthorityLevel.USER_SIGNED_POLICY)
-    assert can_write(AuthorityLevel.USER_SIGNED_POLICY, AuthorityLevel.SYSTEM_SECURITY_POLICY)
+    assert can_write(AuthorityLevel.USER_POLICY, AuthorityLevel.USER_POLICY)
+    assert can_write(AuthorityLevel.USER_POLICY, AuthorityLevel.SYSTEM_SECURITY_POLICY)
     # A same-or-higher authority update is allowed and wins.
     current = authoritative(4500)
     higher = authoritative(4000, source="user-policy-v2")

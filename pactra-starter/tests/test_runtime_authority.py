@@ -29,7 +29,7 @@ async def test_merchant_budget_claim_blocked_on_runtime_path(session):
     assert payload["field"] == "hard_limit_inr"
     assert payload["attempted_value"] == 100000
     assert payload["source_authority"] == "MERCHANT_DATA"
-    assert payload["target_authority"] == "USER_SIGNED_POLICY"
+    assert payload["target_authority"] == "USER_POLICY"
 
     # The protected user policy was NOT mutated: the recorded decision still uses
     # the user's hard limit, not the merchant's forged 100000.
