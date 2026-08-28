@@ -32,8 +32,18 @@ from typing import Any
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import payment_executor_capabilities
 from packages.schemas.domain import MissionState, PolicyOutcome
+from packages.schemas.merchant import MerchantAuthMethod, MerchantIdentity
 from packages.schemas.payment import PaymentIntentState, WebhookEventType
 
+from services.adapters import translate as adapter_translate
+from services.adapters.models import (
+    AdapterFamily,
+    CandidateAuthorizationRequest,
+    CandidateCommerceCatalog,
+    CandidateOperation,
+    SourceIdentity,
+)
+from services.adapters.tools.base import authorize_operation
 from services.agent_orchestrator.merchants.mock_merchants import MockMerchantA
 from services.attack_lab.models import (
     AttackCategory,
@@ -45,6 +55,7 @@ from services.attack_lab.models import (
 from services.attack_lab.scenarios._helpers import (
     constraints,
     drain_worker,
+    effect_delta,
     mission_snapshot,
     payment_intents_for,
     run_mission,
@@ -55,11 +66,14 @@ from services.audit_ledger.replay import replay_mission
 from services.audit_ledger.verify import verify_mission_chain
 from services.payment_executor.intents import create_payment_intent
 from services.payment_executor.providers.fake import FaultMode, webhook_body
+from services.policy_engine.normalization import normalize_offer
 from services.security_kernel.authorization import (
     activate_authorization,
     authorization_for_mission,
     consume_authorization,
 )
+from services.security_kernel.ingress import ingest_merchant_offer
+from services.security_kernel.merchant_registry import default_merchant_registry
 
 EXECUTOR = payment_executor_capabilities()
 
@@ -836,6 +850,227 @@ CONTROL_TRUSTED_REPLAY = _control(
 )
 
 
+# --------------------------------------------------------------------------- #
+# C11-C13. Legitimate protocol payloads (Phase 8)
+# --------------------------------------------------------------------------- #
+# An adapter layer that refused everything would score a perfect block rate
+# across the thirteen ADAPTER attack scenarios while being useless. These three
+# run one well-formed document through each registered adapter, so a boundary
+# that became over-strict is counted as a FALSE POSITIVE rather than praised.
+
+
+async def _adapter_setup(context: Any) -> dict[str, Any]:
+    return {"census": await context.census()}
+
+
+def _adapter_observation(
+    envelope: Any, *, delta: dict[str, int], extra: dict[str, Any]
+) -> Observation:
+    """A control passes only if the translation succeeded AND changed nothing.
+
+    Taint and the unauthenticated source are asserted here rather than only in
+    the attack scenarios: a successful translation that quietly laundered its
+    input would be a bypass wearing a control's clothes.
+    """
+    unchanged = not any(delta.values())
+    preserved = (
+        envelope.taint is True
+        and envelope.source_trust.value == "untrusted"
+        and envelope.source_identity.authenticated is False
+        and all(m.tainted and m.trust.value == "untrusted" for m in envelope.provenance.values())
+    )
+    return Observation(
+        blocked=False,
+        reason_code=None,
+        invariant_preserved=unchanged and preserved,
+        observed_effects={
+            "translated": True,
+            "adapter_id": envelope.adapter_id,
+            "adapter_family": envelope.adapter_family.value,
+            "protocol": f"{envelope.protocol_name} {envelope.protocol_version}",
+            "taint_preserved": preserved,
+            "provenance_fields": len(envelope.provenance),
+            "warnings": [w.code.value for w in envelope.warnings],
+            "row_delta": delta,
+            **extra,
+        },
+        evidence=(
+            "a well-formed protocol payload translated into a canonical candidate that "
+            "is still untrusted and tainted, and nothing was written"
+        ),
+    )
+
+
+async def _benign_mcp_execute(context: Any, state: dict[str, Any]) -> Observation:
+    envelope = adapter_translate(
+        "mcp.tools-call.v1",
+        family=AdapterFamily.TOOL,
+        protocol_version="2025-06-18",
+        payload={
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {
+                "name": "pactra.offer.request",
+                "arguments": {"category": "wireless_earbuds", "quantity": 1},
+            },
+        },
+        source=SourceIdentity(claimed_id="honest-agent", channel="attack-lab"),
+    )
+    candidate = envelope.canonical_payload
+    assert isinstance(candidate, CandidateOperation)
+    # The capability boundary must PERMIT it: the operation resolves to
+    # offer.request, which the buyer agent legitimately holds.
+    capability = authorize_operation(candidate, principal="buyer-agent").value
+    delta = effect_delta(state["census"], await context.census())
+    return _adapter_observation(
+        envelope,
+        delta=delta,
+        extra={
+            "operation": candidate.operation.value,
+            "capability_enforced": capability,
+            "arguments": sorted(candidate.arguments),
+        },
+    )
+
+
+CONTROL_BENIGN_MCP_TOOL_CALL = _control(
+    scenario_id="control_benign_mcp_tool_call",
+    name="Control: a legitimate MCP tool call translates and passes the firewall",
+    description=(
+        "A well-formed JSON-RPC 2.0 tools/call naming pactra.offer.request must "
+        "translate into a candidate operation, resolve to the non-privileged "
+        "offer.request capability, and be PERMITTED for the buyer-agent principal. "
+        "The candidate must remain tainted and untrusted, and nothing may be written."
+    ),
+    invariants=("A WELL-FORMED TOOL CALL -> A CANDIDATE OPERATION, STILL UNTRUSTED",),
+    severity=Severity.MEDIUM,
+    setup=_adapter_setup,
+    execute=_benign_mcp_execute,
+)
+
+
+async def _benign_commerce_execute(context: Any, state: dict[str, Any]) -> Observation:
+    envelope = adapter_translate(
+        "pactra.commerce.v1",
+        family=AdapterFamily.COMMERCE,
+        protocol_version="1.0",
+        payload={
+            "protocol": "pactra.commerce",
+            "merchant_id": "merchant_a",
+            "offers": [
+                {
+                    "merchant_id": "merchant_a",
+                    "product_id": "aur-eb-01",
+                    "title": "Aurora SoundCore Wireless Earbuds",
+                    "description": "Premium ANC earbuds with 30h battery.",
+                    "price": 4299,
+                    "currency": "INR",
+                    "rating": 4.6,
+                    "in_stock": True,
+                    "offered_at": "2026-01-01T12:00:00+00:00",
+                }
+            ],
+        },
+        source=SourceIdentity(claimed_id="merchant_a", channel="attack-lab"),
+    )
+    catalog = envelope.canonical_payload
+    assert isinstance(catalog, CandidateCommerceCatalog)
+    candidate = catalog.offers[0]
+    # And it must survive the REAL ingress into a valid kernel offer once a
+    # transport-authenticated context exists. A commerce adapter whose output
+    # could not be ingested would translate into nothing usable.
+    identity = MerchantIdentity(
+        merchant_id="merchant_a",
+        auth_method=MerchantAuthMethod.IN_PROCESS_ADAPTER,
+        channel="in-process",
+    )
+    merchant_context = default_merchant_registry().context_for(identity)
+    provenanced = ingest_merchant_offer(candidate.offer, merchant_context)
+    normalized = normalize_offer(
+        candidate.offer, merchant_context, constraints(soft_budget_inr=4500)
+    )
+
+    delta = effect_delta(state["census"], await context.census())
+    return _adapter_observation(
+        envelope,
+        delta=delta,
+        extra={
+            "offers_translated": len(catalog.offers),
+            "claimed_merchant_id": candidate.claimed_merchant_id,
+            "identity_mismatch_after_ingress": provenanced.identity_mismatch,
+            "merchant_trust_from_registry": provenanced.merchant_trust.value,
+            "offer_valid_after_normalization": normalized.valid,
+            "amount_inr_after_ingress": provenanced.amount_inr.value,
+        },
+    )
+
+
+CONTROL_BENIGN_COMMERCE_CATALOG = _control(
+    scenario_id="control_benign_commerce_catalog",
+    name="Control: a legitimate commerce catalog translates and ingests",
+    description=(
+        "A well-formed pactra.commerce catalog from merchant_a must translate into a "
+        "candidate offer, and that candidate must then pass the REAL ingress and "
+        "normalization with a transport-authenticated context: no identity mismatch, "
+        "trust 0.9 from the server-owned registry, and a valid offer. A commerce "
+        "adapter whose output could not be ingested would translate into nothing usable."
+    ),
+    invariants=("A WELL-FORMED CATALOG -> A CANDIDATE OFFER THE KERNEL CAN INGEST",),
+    severity=Severity.MEDIUM,
+    setup=_adapter_setup,
+    execute=_benign_commerce_execute,
+)
+
+
+async def _benign_intent_execute(context: Any, state: dict[str, Any]) -> Observation:
+    envelope = adapter_translate(
+        "pactra.authorization-intent.v1",
+        family=AdapterFamily.PAYMENT_AUTHORIZATION,
+        protocol_version="1.0",
+        payload={
+            "protocol": "pactra.authorization-intent",
+            "merchant_id": "merchant_a",
+            "product_id": "P1",
+            "quantity": 1,
+            "amount_inr": 3799,
+            "currency": "INR",
+            "expires_at": "2030-01-01T12:00:00+00:00",
+        },
+        source=SourceIdentity(claimed_id="honest-agent", channel="attack-lab"),
+    )
+    candidate = envelope.canonical_payload
+    assert isinstance(candidate, CandidateAuthorizationRequest)
+    delta = effect_delta(state["census"], await context.census())
+    return _adapter_observation(
+        envelope,
+        delta=delta,
+        extra={
+            "claimed_amount_inr": candidate.claimed_amount_inr,
+            "claimed_currency": candidate.claimed_currency,
+            "is_candidate_only": candidate.candidate,
+            "authorizations_created": delta["authorizations"],
+        },
+    )
+
+
+CONTROL_BENIGN_AUTHORIZATION_INTENT = _control(
+    scenario_id="control_benign_authorization_intent",
+    name="Control: a legitimate authorization intent translates to a candidate",
+    description=(
+        "A well-formed pactra.authorization-intent document must translate into a "
+        "CandidateAuthorizationRequest carrying the claimed amount and currency. This "
+        "is the control half of adapter_authorization_forgery: the boundary must "
+        "accept an honest intent while creating zero authorizations, so refusing every "
+        "intent is counted as a false positive rather than as security."
+    ),
+    invariants=("A WELL-FORMED INTENT -> A CANDIDATE REQUEST, AND NO ARTIFACT",),
+    severity=Severity.MEDIUM,
+    setup=_adapter_setup,
+    execute=_benign_intent_execute,
+)
+
+
 SCENARIOS = (
     CONTROL_ALLOWED_TRANSACTION,
     CONTROL_REQUIRE_APPROVAL,
@@ -847,4 +1082,7 @@ SCENARIOS = (
     CONTROL_VALID_RECONCILIATION,
     CONTROL_AUDIT_CHAIN_VERIFIES,
     CONTROL_TRUSTED_REPLAY,
+    CONTROL_BENIGN_MCP_TOOL_CALL,
+    CONTROL_BENIGN_COMMERCE_CATALOG,
+    CONTROL_BENIGN_AUTHORIZATION_INTENT,
 )

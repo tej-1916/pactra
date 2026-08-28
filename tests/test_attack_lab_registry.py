@@ -25,7 +25,11 @@ from services.attack_lab.registry import (
     UnknownScenario,
     load_registry,
 )
-from services.attack_lab.scenarios import REQUIRED_SCENARIOS
+from services.attack_lab.scenarios import (
+    PHASE6_CANONICAL_SCENARIOS,
+    REQUIRED_ADAPTER_SCENARIOS,
+    REQUIRED_SCENARIOS,
+)
 
 pytestmark = pytest.mark.attack_lab
 
@@ -40,6 +44,32 @@ def test_registry_contains_every_required_scenario():
     }
     assert not missing, f"required scenarios are not registered: {missing}"
     assert len(REQUIRED_SCENARIOS) >= 15
+
+
+def test_registry_contains_every_required_phase8_adapter_scenario():
+    registry = load_registry()
+    missing = {
+        requirement: scenario_id
+        for requirement, scenario_id in REQUIRED_ADAPTER_SCENARIOS.items()
+        if not registry.has(scenario_id)
+    }
+    assert not missing, f"required adapter scenarios are not registered: {missing}"
+    assert len(REQUIRED_ADAPTER_SCENARIOS) >= 13
+    assert all(
+        registry.get(scenario_id).category is AttackCategory.ADAPTER
+        for scenario_id in REQUIRED_ADAPTER_SCENARIOS.values()
+    )
+
+
+def test_phase6_canonical_baseline_is_still_exactly_47_original_scenarios():
+    registry = load_registry()
+    assert len(PHASE6_CANONICAL_SCENARIOS) == 47
+    assert len(set(PHASE6_CANONICAL_SCENARIOS)) == 47
+    scenarios = [registry.get(scenario_id) for scenario_id in PHASE6_CANONICAL_SCENARIOS]
+    assert sum(s.category in MALICIOUS_CATEGORIES for s in scenarios) == 36
+    assert sum(s.category is AttackCategory.BENIGN_CONTROL for s in scenarios) == 10
+    assert sum(s.category is AttackCategory.KNOWN_LIMITATION for s in scenarios) == 1
+    assert all(s.category is not AttackCategory.ADAPTER for s in scenarios)
 
 
 def test_at_least_fifteen_malicious_scenarios_exist():

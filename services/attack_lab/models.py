@@ -53,6 +53,12 @@ class AttackCategory(str, Enum):
     WEBHOOK = "WEBHOOK"
     AUDIT = "AUDIT"
     CONCURRENCY = "CONCURRENCY"
+    #: Phase 8. Attacks that arrive through a PROTOCOL ADAPTER rather than
+    #: through the merchant transport or the payment path. Added as its own
+    #: group rather than folded into INPUT_TRUST so the Phase 6 canonical
+    #: benchmark can still be run and reported at its original 47 scenarios:
+    #: quietly enlarging a group would change a published denominator.
+    ADAPTER = "ADAPTER"
     BENIGN_CONTROL = "BENIGN_CONTROL"
     KNOWN_LIMITATION = "KNOWN_LIMITATION"
 
@@ -68,8 +74,15 @@ MALICIOUS_CATEGORIES = frozenset(
         AttackCategory.WEBHOOK,
         AttackCategory.AUDIT,
         AttackCategory.CONCURRENCY,
+        AttackCategory.ADAPTER,
     }
 )
+
+#: The Phase 6 canonical benchmark is pinned by SCENARIO ID, not by category —
+#: see ``services.attack_lab.scenarios.PHASE6_CANONICAL_SCENARIOS``. A category
+#: filter would have silently regrown the moment Phase 8 added a benign control
+#: to BENIGN_CONTROL, which is exactly the denominator drift that makes two
+#: benchmark runs incomparable.
 
 
 class Severity(str, Enum):

@@ -40,8 +40,11 @@ from apps.api.db.models import (
     AuditEventRow,
     AuthorizationRow,
     Mission,
+    MissionConstraintsRow,
+    Offer,
     OutboxEventRow,
     PaymentIntentRow,
+    PolicyDecisionRow,
     WebhookEventRow,
 )
 from apps.api.db.session import configure_sqlite_transactions
@@ -107,6 +110,9 @@ class ScenarioContext:
         async with self.sessionmaker() as session:
             return {
                 "missions": await self._count(session, Mission),
+                "mission_constraints": await self._count(session, MissionConstraintsRow),
+                "offers": await self._count(session, Offer),
+                "policy_decisions": await self._count(session, PolicyDecisionRow),
                 "authorizations": await self._count(session, AuthorizationRow),
                 "payment_intents": await self._count(session, PaymentIntentRow),
                 "outbox_events": await self._count(session, OutboxEventRow),

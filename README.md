@@ -75,11 +75,11 @@ pactra/
 │   ├── payment_executor/       # provider protocol, idempotency, outbox (Phase 4)
 │   ├── risk_engine/            # advisory risk/anomaly scoring, evaluation
 │   │                           #   harness + CLI (Phase 7)
+│   ├── adapters/               # typed translation families, sealed registry,
+│   │                           #   protocol support matrix (Phase 8)
 │   ├── attack_lab/             # adversarial scenarios, runner, metrics,
 │   │                           #   evaluation harness + CLI (Phase 6)
 │   └── audit_ledger/           # append-only hash-chained events + verify/replay
-├── adapters/                   # CommerceAdapter, PaymentAuthorizationAdapter,
-│                               #   ToolAdapter, PaymentRailAdapter (Phase 8)
 ├── reports/attack-lab/         # generated evaluation JSON (gitignored)
 ├── reports/risk-engine/        # generated risk evaluation JSON (gitignored)
 ├── packages/schemas/           # shared typed request/event/provenance schemas
@@ -123,7 +123,7 @@ Phase 5  Audit /verify endpoint + corruption test + event replay  [DONE]
 Phase 6  Adversarial Attack Lab + evaluation harness (real metrics) [DONE]
 Phase 7  Risk/anomaly engine (advisory only)                       [DONE,
          deterministic heuristic; ML deliberately NOT added — see below]
-Phase 8  Protocol adapter correction (4 adapter families)
+Phase 8  Protocol adapter correction (integration families)       [DONE]
 Phase 9  Frontend, including the Adversarial Test Lab UI
 Phase 10 Demo hardening: seeded data, one-command demo, metrics
 ```
@@ -1431,3 +1431,118 @@ workflow or escalation routing. No automatic invocation from the mission path.
 No `risk_scores` table and no migration — nothing in the kernel reads a risk row.
 No ML. No protocol adapters (Phase 8), no frontend (Phase 9). No cryptographic
 signing and no cryptographic merchant authentication, as in Phases 3–6.
+
+---
+
+## Phase 8 — protocol adapter correction + integration boundary (implemented)
+
+Phase 8 corrects the old assumption that every named commerce/payment/agent
+protocol belongs behind one interchangeable adapter. The integration path is:
+
+```text
+EXTERNAL PROTOCOL
+  -> translation into a canonical candidate (still untrusted and tainted)
+  -> server-owned capability and security controls
+  -> deterministic policy
+  -> Phase 3 transaction binding + server-issued authorization
+  -> Phase 4 payment executor + payment rail
+```
+
+Never `external protocol -> privileged execution`. Translation is synchronous,
+takes no database session, and cannot be given a caller-owned registry. The
+process registry is populated from one explicit built-in list and sealed before
+translation is exposed; unknown IDs, duplicate IDs, runtime registration,
+family mismatch and version mismatch are refused.
+
+### Adapter families
+
+```text
+CommerceAdapter              external catalog/offer -> candidate commerce data
+PaymentAuthorizationAdapter  external intent -> CandidateAuthorizationRequest
+ToolAdapter                  external invocation -> CandidateOperation
+AgentCommunicationAdapter    declared only; no grounded requirement, no adapter
+PaymentRailAdapter           existing Phase 4 PaymentProvider boundary
+```
+
+The rail is deliberately not registered beside pure translators. The existing
+`PaymentProvider` / provider registry remains the execution boundary, and only
+the payment executor reaches it under `payment.execute`. Phase 8 adds no wrapper
+and performs no aesthetic rename of the stable Phase 4 code.
+
+### Protocol support matrix
+
+The machine-readable source of truth is
+`services/adapters/support.py`; `python -m services.adapters.run --matrix --json`
+renders it. Tests require every `IMPLEMENTED` / `PARTIAL` translation row to
+resolve to a registered adapter under the stated family, every `PLANNED` row to
+name no adapter, the Razorpay row to match the existing payment-rail registry,
+and this table plus `docs/architecture.md` to match the machine matrix.
+
+| Protocol/system | Actual role | Adapter family | What is really implemented | Status |
+|---|---|---|---|---|
+| `Razorpay` | Payment provider / rail | `PaymentRailAdapter` | Existing Phase 4 test-mode Orders API adapter and webhook verification; Checkout and live-API validation remain absent | `PARTIAL` |
+| `MCP` | Tool/context protocol | `ToolAdapter` | Thin JSON-RPC 2.0 `tools/call` request translation for three closed revisions and five non-privileged `pactra.*` tool names; no server or transport | `PARTIAL` |
+| `AP2` | External payment authorization | `PaymentAuthorizationAdapter` | The generic family and candidate-only PACTRA reference adapter exist; no AP2 schema or adapter exists | `PLANNED` |
+| `x402` | Not classified from repository evidence | `(unassigned)` | No code and no compatibility claim | `PLANNED` |
+| `ACP` | Not classified from repository evidence | `(unassigned)` | No code and no compatibility claim | `PLANNED` |
+| `pactra.commerce.v1` | PACTRA-native commerce format | `CommerceAdapter` | Strict catalog/offer translation into candidate merchant data, with claims, provenance, taint and unknown metadata preserved | `IMPLEMENTED` |
+| `pactra.authorization-intent.v1` | PACTRA-native authorization-intent format | `PaymentAuthorizationAdapter` | Strict translation into a candidate request; no artifact issuance or external signature verification | `IMPLEMENTED` |
+
+The MCP claim is intentionally narrow. PACTRA is not an MCP server: it has no
+stdio/HTTP/SSE transport, `initialize`, lifecycle, capability negotiation,
+`tools/list`, response construction, resources, prompts, sampling or
+notifications. It reads one official request shape from the
+[2024-11-05](https://modelcontextprotocol.io/specification/2024-11-05/server/tools),
+[2025-03-26](https://modelcontextprotocol.io/specification/2025-03-26/server/tools),
+and [2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+revisions. Any other revision is refused. The current adapter also narrows tool
+arguments to JSON scalars and string lists and refuses `_meta` rather than
+silently discarding protocol data it does not interpret.
+
+### Authority, provenance, and confused-deputy controls
+
+`SourceIdentity.authenticated` is `Literal[False]`: Phase 8 adds no authenticated
+protocol channel and claims none. Every emitted provenance value remains
+`UNTRUSTED`, tainted, and at no more than `AGENT_PROPOSAL` authority. Schema
+validity changes none of those properties.
+
+Adapter identity and implementation trust grant the caller nothing. A
+`CandidateOperation` carries no principal, capability set or authorized flag;
+the trusted caller supplies a principal to the capability boundary, which
+re-resolves it from the server-owned registry. Privileged tool names have no
+canonical enum member. A payload naming `payment.execute`, `authority=SYSTEM`,
+`policy_override=true`, `authorization_valid=true`, `merchant_trust=1.0` or a
+forged adapter identity is refused before it can become canonical state.
+
+A commerce candidate has no merchant trust or transport identity. The existing
+merchant ingress adds the authenticated context separately and reads trust from
+the server-owned merchant registry. An authorization candidate has no nonce,
+digest, artifact ID, status or consumed timestamp; only the existing issuer can
+mint the server-held artifact. No cryptographic external authorization verifier
+was added.
+
+### Isolation and regression coverage
+
+The focused contract applies to every registered translator: deterministic
+translation, exact family/version handling, source/provenance/taint retention,
+authority ceiling, reserved-field refusal, malformed-input refusal, and zero
+privileged fields in canonical output. Isolation checks the import graph and
+signature, then translates every fixture against a populated database and
+proves zero provider calls, merchant-transport reachability, new or mutated
+policy state, authorizations, payment intents, outbox rows and audit rows.
+
+Phase 8 adds 13 hostile adapter scenarios plus 3 benign controls. They are an
+expanded benchmark and are never folded into the published Phase 6 baseline.
+`--phase6-baseline` remains pinned to the original 47 IDs: 36 malicious, 10
+controls and 1 known limitation. Adapter-originated transaction tests reuse the
+single Phase 3 binding mechanism and mutate amount, currency, merchant, product
+and quantity one at a time; every mutation must leave the authorization active
+and unconsumed while returning `TRANSACTION_BINDING_FAILURE`.
+
+### Phase 8 limitations
+
+No protocol ingress endpoint, authenticated protocol transport, external
+authorization verifier, full MCP server, ACP/AP2/x402 adapter, new payment rail,
+database migration or dependency was added. Razorpay remains partial/test-mode,
+with no claim of cryptographic user signing, cryptographic merchant
+authentication, provider receipt uniqueness or production completeness.

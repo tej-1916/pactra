@@ -4,11 +4,18 @@
     --all                        run everything
     --scenario ID [--scenario ID]
     --category TRANSACTION       one or more benchmark groups
+    --phase6-baseline            exactly the 47 canonical Phase 6 scenarios
     --iterations N               repeat the selection N times (default 1)
     --json                       machine-readable report on stdout
     --out PATH                   also write the JSON report to a file
     --sqlite-only                skip the PostgreSQL concurrency scenarios
     --require-postgres           fail if PostgreSQL scenarios could not run
+
+``--phase6-baseline`` runs exactly the 47 scenarios the published Phase 6
+baseline was measured over, pinned by id. Phase 8 added thirteen adapter attacks
+and three benign adapter controls; ``--all`` runs the expanded 63 and reports
+them as a DIFFERENT number. Merging the two would move a published denominator
+without saying so.
 
 EXIT CODES, AND WHY THEY ARE WHAT THEY ARE
 ------------------------------------------
@@ -44,6 +51,7 @@ from services.attack_lab.evaluation import AttackRunReport, evaluate
 from services.attack_lab.models import AttackCategory, Backend
 from services.attack_lab.registry import UnknownScenario, load_registry
 from services.attack_lab.report import render_json, render_text, write_report
+from services.attack_lab.scenarios import PHASE6_CANONICAL_SCENARIOS
 
 EXIT_OK = 0
 EXIT_SECURITY_FAILURE = 1
@@ -75,6 +83,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="NAME",
         help=f"run a benchmark group: {', '.join(c.value for c in AttackCategory)}",
+    )
+    selection.add_argument(
+        "--phase6-baseline",
+        action="store_true",
+        help=(
+            "run exactly the 47 canonical Phase 6 scenarios (36 malicious, 10 controls, "
+            "1 limitation), so the published baseline stays comparable across phases"
+        ),
     )
 
     execution = parser.add_argument_group("execution")
@@ -158,13 +174,29 @@ async def run(args: argparse.Namespace) -> int:
         print(render_listing())
         return EXIT_OK
 
-    if not (args.all or args.scenario or args.category):
+    if not (args.all or args.scenario or args.category or args.phase6_baseline):
         build_parser().print_usage(sys.stderr)
         print(
-            "\nnothing selected: pass --all, --scenario ID, --category NAME, or --list",
+            "\nnothing selected: pass --all, --phase6-baseline, --scenario ID, "
+            "--category NAME, or --list",
             file=sys.stderr,
         )
         return EXIT_USAGE
+
+    # The canonical Phase 6 set is expressed as an explicit id list rather than
+    # a category filter, so it cannot silently regrow when a later phase adds a
+    # scenario to one of those categories — which is exactly what Phase 8 did to
+    # BENIGN_CONTROL. Combining it with another selector would defeat the point.
+    scenario_ids = list(args.scenario)
+    if args.phase6_baseline:
+        if args.all or args.scenario or args.category:
+            print(
+                "--phase6-baseline selects a fixed, pinned set and cannot be combined "
+                "with --all, --scenario or --category",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        scenario_ids = list(PHASE6_CANONICAL_SCENARIOS)
 
     if args.iterations < 1:
         print("--iterations must be at least 1", file=sys.stderr)
@@ -181,7 +213,7 @@ async def run(args: argparse.Namespace) -> int:
     try:
         report = await evaluate(
             registry=registry,
-            scenario_ids=args.scenario or None,
+            scenario_ids=scenario_ids or None,
             categories=args.category or None,
             iterations=args.iterations,
             include_postgres=not args.sqlite_only,

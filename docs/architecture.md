@@ -1096,11 +1096,105 @@ the reasons KL-07 gives.
 
 ## Protocol adapters (corrected)
 
-ACP / AP2 / MCP / x402 are not interchangeable; they sit at different layers.
-PACTRA normalizes to an internal transaction model and exposes distinct adapter
-families — `CommerceAdapter`, `PaymentAuthorizationAdapter`, `ToolAdapter`,
-`PaymentRailAdapter`. Only implemented protocols are claimed; partial ones are
-labeled `experimental` / `partial` / `simulated`.
+Phase 8 treats integration as a boundary between external representation and
+the existing kernel, never as an alternate route around it:
+
+```text
+external bytes / document
+  -> sealed server-owned adapter registry
+  -> family + exact protocol-version resolution
+  -> protocol-specific translation
+  -> canonical candidate + per-field provenance (still tainted/untrusted)
+  -> existing capability / ingress / policy / binding / authorization path
+  -> existing payment executor and PaymentProvider rail
+```
+
+ACP / AP2 / MCP / x402 / Razorpay are not interchangeable. The declared
+families are:
+
+* `CommerceAdapter`: external merchant/catalog/offer representation into
+  candidate commerce data. It has no `MerchantContext` or trust field; the
+  existing ingress receives transport identity separately and resolves trust
+  from the server-owned merchant registry.
+* `PaymentAuthorizationAdapter`: external authorization intention into
+  `CandidateAuthorizationRequest`. The candidate shares no artifact-only field
+  with PACTRA's `Authorization`; it cannot be consumed, and only the existing
+  `issue_authorization` path can mint the server-held artifact.
+* `ToolAdapter`: external invocation into a closed `CandidateOperation` set.
+  The operation-to-capability mapping is server-owned and contains no
+  privileged capability.
+* `AgentCommunicationAdapter`: declared for classification, with no base class
+  or implementation because no repository-grounded requirement justifies one.
+* `PaymentRailAdapter`: the already-stable Phase 4 `PaymentProvider` protocol.
+  Rails execute and therefore do not belong in the pure translation registry.
+
+### Protocol support matrix
+
+`services/adapters/support.py` is the one machine-readable source. The CLI
+renders it as JSON, and tests hold both human tables, the translating registry,
+and the existing rail registry to it.
+
+| Protocol/system | Actual role | Adapter family | What is really implemented | Status |
+|---|---|---|---|---|
+| `Razorpay` | Payment provider / rail | `PaymentRailAdapter` | Existing Phase 4 test-mode Orders API adapter and webhook verification; Checkout and live-API validation remain absent | `PARTIAL` |
+| `MCP` | Tool/context protocol | `ToolAdapter` | Thin JSON-RPC 2.0 `tools/call` request translation for three closed revisions and five non-privileged `pactra.*` tool names; no server or transport | `PARTIAL` |
+| `AP2` | External payment authorization | `PaymentAuthorizationAdapter` | The generic family and candidate-only PACTRA reference adapter exist; no AP2 schema or adapter exists | `PLANNED` |
+| `x402` | Not classified from repository evidence | `(unassigned)` | No code and no compatibility claim | `PLANNED` |
+| `ACP` | Not classified from repository evidence | `(unassigned)` | No code and no compatibility claim | `PLANNED` |
+| `pactra.commerce.v1` | PACTRA-native commerce format | `CommerceAdapter` | Strict catalog/offer translation into candidate merchant data, with claims, provenance, taint and unknown metadata preserved | `IMPLEMENTED` |
+| `pactra.authorization-intent.v1` | PACTRA-native authorization-intent format | `PaymentAuthorizationAdapter` | Strict translation into a candidate request; no artifact issuance or external signature verification | `IMPLEMENTED` |
+
+MCP is a partial request-shape adapter, not an MCP server. It implements no
+transport, lifecycle/`initialize`, capability negotiation, `tools/list`,
+response, resource, prompt, sampling or notification surface. Its closed
+revision set is 2024-11-05, 2025-03-26 and 2025-06-18, matching the official
+`tools/call` specifications. Request IDs are validated as JSON-RPC string or
+integer IDs. Nested arguments and `_meta` are refused because this narrow
+boundary cannot preserve them faithfully; accepting and discarding either
+would make the translation claim broader than its output.
+
+### Registry and authority boundary
+
+The translating registry is populated from an explicit built-in tuple, then
+sealed. There is no discovery/import-by-name path, no caller-supplied registry
+parameter on `translate`, and no runtime registration, replacement,
+deregistration or trust mutation. Resolution requires an adapter ID, expected
+family and exact supported protocol version; no unknown value falls back to a
+default.
+
+The descriptor supplies adapter identity, never the payload or implementation.
+The descriptor is frozen and capped at `AGENT_PROPOSAL` / `UNTRUSTED`; after an
+implementation returns, the common translation boundary independently checks
+family/payload pairing, every provenance authority, taint and trust value.
+
+This also closes the confused-deputy path. A trusted registered implementation
+does not lend authority to its input. `CandidateOperation` contains no
+principal, capabilities or approval flag; a principal selected by trusted glue
+is re-resolved from `capability_registry`, and the required capability comes
+from the server-owned operation table. A caller claiming `payment-executor`
+therefore does not acquire its identity, while `payment.execute` has no
+canonical operation to translate into at all.
+
+### Translation isolation
+
+All translating entry points are synchronous and take no database session.
+The adapter import graph cannot reach payment creation, authorization writes,
+transaction binding, merchant transports, audit writes, risk evaluation or the
+ORM. Tests additionally run every adapter against populated state and compare
+row counts plus policy/authorization values before and after. Translation
+creates and consumes no authorization, creates no payment intent or outbox/audit
+row, mutates no policy, and calls no provider or merchant transport.
+
+The 13 hostile adapter scenarios and 3 benign controls are reported as a Phase
+8 expansion. The original Phase 6 benchmark is selected by a fixed 47-ID list,
+not by categories, so later adapter controls cannot move its denominator.
+Adapter-originated bindings use Phase 3 unchanged; amount, currency, merchant,
+product and quantity mutations all recompute the existing digest and fail
+consumption.
+
+No migration and no dependency were required. No authenticated protocol ingress
+or external signature verifier exists. ACP, AP2 and x402 stay planned. Razorpay
+stays partial/test-mode with every Phase 4 limitation unchanged.
 
 ## Authority principle (unchanged from v1, restated)
 
