@@ -47,6 +47,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
     "postgres: integration test requiring a real PostgreSQL server (Phase 4)",
     "attack_lab: adversarial attack lab / evaluation harness test (Phase 6)",
+    "slow: drives the full risk-evaluation corpus end to end (Phase 7)",
 ]
 
 [tool.ruff]

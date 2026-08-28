@@ -1,4 +1,4 @@
-.PHONY: install format lint type-check test migrate attack attack-full all
+.PHONY: install format lint type-check test migrate attack attack-full risk risk-eval all
 
 install:
 	pip install -e ".[dev]"
@@ -29,5 +29,17 @@ attack:
 attack-full:
 	python -m services.attack_lab.run --all --iterations 10 --require-postgres \
 		--out reports/attack-lab/run.json
+
+# One mission's advisory assessment, read-only. Records nothing.
+risk:
+	python -m services.risk_engine.run --mission $(MISSION)
+
+# The labelled SYNTHETIC risk-evaluation corpus. Exits non-zero only if a
+# scenario failed to execute or a score did not reproduce — never because the
+# measured detection rate was poor, which would create pressure to report a
+# flattering number instead of an honest one.
+risk-eval:
+	python -m services.risk_engine.run --evaluate --iterations 10 \
+		--out reports/risk-engine/run.json
 
 all: lint type-check test

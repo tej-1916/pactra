@@ -95,6 +95,11 @@ class EventType(str, Enum):
     WEBHOOK_REJECTED = "WEBHOOK_REJECTED"
     DUPLICATE_WEBHOOK_IGNORED = "DUPLICATE_WEBHOOK_IGNORED"
     WEBHOOK_OUT_OF_ORDER_IGNORED = "WEBHOOK_OUT_OF_ORDER_IGNORED"
+    # Advisory risk assessment (Phase 7). ADVISORY ONLY: this event records what
+    # the risk engine concluded, never a decision. It grants nothing, consumes
+    # nothing, and the Phase 5 replay reducer treats it as inert — a mission
+    # replayed with it present reconstructs identically to one without it.
+    RISK_ASSESSED = "RISK_ASSESSED"
 
 
 class PolicyOutcome(str, Enum):

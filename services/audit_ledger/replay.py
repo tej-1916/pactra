@@ -68,6 +68,7 @@ from packages.schemas.audit import (
     MissionReplayResult,
     ReplayedAuthorization,
     ReplayedPayment,
+    ReplayedRiskAssessment,
     ReplayedSecurityEvent,
     ReplayReasonCode,
     SkippedTransition,
@@ -175,6 +176,7 @@ class _ReplayState:
     payment: ReplayedPayment = field(default_factory=ReplayedPayment)
     security_events: list[ReplayedSecurityEvent] = field(default_factory=list)
     skipped_transitions: list[SkippedTransition] = field(default_factory=list)
+    risk_assessments: list[ReplayedRiskAssessment] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -566,6 +568,60 @@ def _on_webhook_out_of_order_ignored(state: _ReplayState, event: AuditEventRow) 
     _record_security(state, event)
 
 
+def _on_risk_assessed(state: _ReplayState, event: AuditEventRow) -> None:
+    """Fold an advisory risk assessment. DELIBERATELY INERT (Phase 7).
+
+    This handler touches nothing else on the accumulator: not
+    ``mission_state``, not ``authorization``, not ``payment``, not
+    ``security_events``. It appends one record to a list that no other rule
+    reads and that no state comparison consults.
+
+    That inertness is the reducer's half of the Phase 7 invariant that risk is
+    never authority. An advisory event exists in the ledger, so replay must
+    account for it — the exhaustive handler table means it cannot be silently
+    dropped — but accounting for it must not let it move a reconstructed state.
+    A test replays the same mission with and without the event and asserts every
+    other field of the projection is byte-identical.
+
+    It is NOT added to ``SECURITY_EVENT_TYPES``: a risk assessment is an opinion,
+    and listing it beside AUTHORIZATION_REPLAY_DETECTED would put an opinion in
+    the ordered history of refusals.
+
+    Payload reads are lenient rather than refusing, unlike every other reducer
+    here. The difference is deliberate: a malformed SECURITY_VIOLATION means the
+    security history cannot be reconstructed and refusing is the only honest
+    answer, whereas a malformed advisory payload costs the projection nothing it
+    was relying on. Refusing the whole replay because an advisory note was
+    unreadable would let the advisory layer break a reconstruction — precisely
+    the authority it must not have.
+    """
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    score = payload.get("score")
+    codes = payload.get("factor_codes")
+    state.risk_assessments.append(
+        ReplayedRiskAssessment(
+            sequence=event.sequence,
+            assessment_id=_advisory_str(payload.get("assessment_id")),
+            score=float(score) if isinstance(score, (int, float)) else None,
+            band=_advisory_str(payload.get("band")),
+            recommendation=_advisory_str(payload.get("recommendation")),
+            engine_version=_advisory_str(payload.get("engine_version")),
+            model_version=_advisory_str(payload.get("model_version")),
+            factor_codes=[str(code) for code in codes] if isinstance(codes, list) else [],
+        )
+    )
+
+
+def _advisory_str(value: object) -> str | None:
+    """Lenient string read for an advisory payload only.
+
+    Distinct from the strict ``_opt_str(event, key)`` readers above, which refuse
+    a malformed payload. See ``_on_risk_assessed`` for why the advisory path is
+    lenient where every enforcement path is not.
+    """
+    return value if isinstance(value, str) else None
+
+
 #: Exhaustive by contract. `test_every_event_type_has_a_reducer` asserts this
 #: table's keys equal the full EventType enum, so adding an event type without
 #: teaching replay what it means fails a test instead of quietly distorting a
@@ -604,6 +660,7 @@ HANDLERS: dict[EventType, Callable[[_ReplayState, AuditEventRow], None]] = {
     EventType.WEBHOOK_REJECTED: _on_webhook_rejected,
     EventType.DUPLICATE_WEBHOOK_IGNORED: _on_duplicate_webhook_ignored,
     EventType.WEBHOOK_OUT_OF_ORDER_IGNORED: _on_webhook_out_of_order_ignored,
+    EventType.RISK_ASSESSED: _on_risk_assessed,
 }
 
 
@@ -672,6 +729,7 @@ def reduce_events(mission_id: uuid.UUID, events: Sequence[AuditEventRow]) -> Mis
         payment=state.payment.model_copy(deep=True),
         security_events=list(state.security_events),
         skipped_transitions=list(state.skipped_transitions),
+        risk_assessments=list(state.risk_assessments),
     )
 
 

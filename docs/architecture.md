@@ -143,6 +143,12 @@ Provenance Engine → Taint Tracking → Authority Lattice
 Each stage is deterministic. The LLM feeds proposals into the top; nothing
 downstream trusts it.
 
+The Risk / Anomaly stage is the one stage that decides nothing. It is drawn in
+the pipeline because that is where it reads from, not because anything waits on
+it: Phase 7 invokes it on demand rather than from the mission path, precisely so
+that risk can never become a barrier before payment. See "Advisory risk /
+anomaly engine" below.
+
 ## Capability firewall
 
 Principals hold explicit allow/deny capability sets enforced in code. A buyer
@@ -708,6 +714,385 @@ that was not proven.
 be an endpoint that creates authorizations and payments, so Phase 6 does not add
 one. Reports are filesystem JSON under a gitignored `reports/attack-lab/`; no
 migration and no table were added, because nothing in the kernel reads them.
+
+## Advisory risk / anomaly engine (implemented, Phase 7)
+
+```text
+mission rows + merchant registry + audit ledger
+        ↓  features.py        READ-ONLY SELECTs, every value carries its source
+        ↓  anomaly.py         merchant-scoped baseline, or an explicit refusal
+        ↓  heuristic.py       20 declarative rules → RiskFactor list → points
+        ↓  normalize          score = min(1, points / saturation)
+        ↓  band → recommendation
+        ↓  explain.py         text built FROM the contributions, never a model
+        ↓  RiskAssessment     advisory: Literal[True]
+```
+
+`services/risk_engine/` scores a mission, explains the score, and recommends an
+action. It decides nothing. The deterministic kernel — provenance, authority
+lattice, capability firewall, policy engine, transaction binding, authorization,
+replay protection, idempotency — is unchanged by Phase 7 and remains the only
+thing that can permit or refuse a transaction.
+
+### RISK SCORE ≠ AUTHORITY, made structural
+
+The rule is enforced by things that do not exist rather than by discipline:
+
+* **The vocabularies are disjoint.** `RiskRecommendation` is `PROCEED / REVIEW /
+  REQUIRE_STRONGER_APPROVAL / ESCALATE`. It has no `ALLOW` and no `DENY` — those
+  belong to `PolicyOutcome` — so no log line, report, or API response carrying a
+  risk value can be read as an adjudication, and no downstream branch on a
+  string can confuse the two.
+* **`RiskAssessment` has no field to act on.** No authorization id, no capability,
+  no decision, no override. `advisory` is a `Literal[True]`, so a non-advisory
+  assessment fails validation rather than being constructed.
+* **The engine cannot reach anything privileged.** The risk core imports nothing
+  from `services.payment_executor`, `services.security_kernel.authorization`,
+  `services.security_kernel.binding`, the merchant adapters, or the
+  orchestrator. `tests/test_risk_isolation.py` parses the import graph of every
+  core module and fails if it ever can, then replaces every side-effecting
+  function with a landmine, then counts every table before and after.
+* **`assess_mission` takes no score, band, threshold, weight, or capability.**
+  There is no parameter through which a caller could supply one, and neither
+  HTTP route declares a request body at all.
+
+A `CRITICAL` assessment of an `ALLOW` mission leaves it `AUTHORIZED` with a
+spendable authorization. A `LOW` assessment of a `DENY` mission leaves it
+`CANCELLED` with no authorization at all. Both are asserted.
+
+### What the score means, stated precisely
+
+```text
+score = min(1, accumulated points / saturation_points)     saturation = 1.0
+```
+
+A **normalized risk index** in `[0, 1]`. It is **not** a fraud probability and is
+never described as one: no data exists against which a probabilistic reading
+could be calibrated, so `score_semantics` is a pinned literal
+(`NORMALIZED_RISK_INDEX`) on every assessment and a test sweeps the package for
+the phrase.
+
+Bands: `LOW < 0.25 ≤ MEDIUM < 0.50 ≤ HIGH < 0.75 ≤ CRITICAL`. What IS calibrated
+is the band scale, and only that: one severe signal reads HIGH, two read
+CRITICAL. `CRITICAL` is not `DENY`.
+
+### Four weight tiers, not twenty magic numbers
+
+Every number lives in one frozen, server-owned `RiskConfig`. Each of the 20
+factors is assigned one of four documented tiers, which forces the real question
+— *how strong is this evidence?* — onto a scale a reader can hold in their head:
+
+```text
+WEAK      0.05  a mild signal, or one the deterministic kernel already owns
+MODERATE  0.15  a genuine concern on its own
+STRONG    0.35  evidence of adversarial or malfunctioning behaviour
+SEVERE    0.60  behaviour with no benign explanation
+```
+
+Factors grade with `ramp(value, lo, hi)` rather than firing on a threshold
+comparison. A cliff at `0.9 × hard_limit` is a line an adversary can sit just
+under; a ramp is also monotone by construction, which is what lets Hypothesis
+check *more of a risky thing never contributes less risk* across the whole input
+range instead of at hand-picked points.
+
+Nothing can subtract. A long clean record must not net out a single
+identity-spoof event, so contributions are strictly positive and reasons to be
+reassured stay out of the arithmetic.
+
+**Exceeding the soft budget is deliberately WEAK.** The policy engine already
+turns it into `REQUIRE_APPROVAL` — an actual control with actual authority.
+Weighting it heavily here would double-count a control PACTRA already has and
+would drift the advisory number toward looking like the decision. The risk engine
+is most useful where the kernel is silent.
+
+### Feature provenance: a number is not trusted for being numeric
+
+`FEATURE_SPECS` is the authoritative table of what each feature reads and at what
+authority, reusing the kernel's own `AuthorityLevel` / `TrustLevel` rather than a
+parallel vocabulary. Three rules it encodes:
+
+* **Merchant trust comes from the server-owned `MerchantRegistry`, never a
+  payload.** `RawMerchantOffer` has no `merchant_trust` field and `extra="ignore"`
+  drops the key, so a merchant asserting `trust: 1.0` has it discarded at the
+  schema boundary — the defence is structural and the risk engine simply never
+  goes looking. `FeatureSource.MERCHANT_PAYLOAD` exists in the enum and is
+  deliberately unused; a test asserts no feature claims it.
+* **Audit-derived counts keep their provenance.** Several features count
+  `SECURITY_VIOLATION` events: records the KERNEL wrote, about behaviour a
+  MERCHANT attempted. `derived_from_untrusted_evidence=True` travels with those
+  values and is rendered in the explanation, rather than being laundered into
+  "trusted, because the row is ours".
+* **Absent is not zero.** A feature with nothing behind it is `available=False`
+  with a reason, never `0.0`. "No prior payments with this merchant" scored as "a
+  perfect payment record" is the easiest way to make a risk engine quietly wrong
+  in the direction that costs money.
+
+Identity-spoof counts are attributed to the AUTHENTICATED merchant, never the
+one it impersonated — otherwise the victim carries the finding.
+
+### What PACTRA cannot baseline, stated rather than approximated
+
+**There is no user identity in the data model.** `missions` has no owner, no
+account, no session principal. So every user-scoped feature the risk brief lists
+— spend deviation from the user's history, transaction velocity, distinct-merchant
+counts, repeated high-value attempts — is **absent**, not estimated. Every
+explanation says so:
+
+```text
+scope: PACTRA has no user identity in its data model, so no per-user spending
+baseline, velocity, or behavioural deviation was computed or approximated.
+History is scoped by authenticated merchant only.
+```
+
+What CAN be baselined is per-merchant: `authorizations.bound_merchant_id` /
+`bound_amount_inr` are server-written records of transactions actually approved
+against an authenticated identity. Authorizations rather than settled payments,
+because most missions legitimately stop at approval and a payment-only
+population would sit below the observation gate almost always, leaving the
+anomaly layer permanently dark. The **median** rather than the mean: the mean is
+moved by the single largest prior transaction, which is exactly the observation
+an attacker would like to contribute.
+
+Two features are also deliberately absent because their source is empty by
+design: rejected-webhook counts (Phase 4 does not audit rejected signatures — the
+only thing naming a mission in a forged delivery is the payload whose MAC just
+failed) and capability-denial counts (raised as an exception, never audited).
+Implementing them would produce features that are permanently zero.
+
+### Cold start is handled, not scored
+
+Below `min_history_observations` (5) the anomaly features report
+`INSUFFICIENT_HISTORY` and contribute exactly nothing — no global default, no
+prior, no smoothed estimate. "This purchase is 3.1× the median" computed from two
+observations has the shape of evidence and none of the substance.
+
+Cold start itself adds **no** risk. Not knowing a counterparty is not evidence
+against them, and scoring it would make every first transaction suspicious. The
+distinction that does score is different: an authenticated merchant ABSENT FROM
+THE REGISTRY has no reputation, which is a fact the server owns, not knowledge
+the server lacks. `MERCHANT_UNKNOWN` is `STRONG`; cold start is zero. A test
+pins both halves.
+
+`DataQuality` reports observation counts instead of a "confidence" number: a
+confidence figure implies a calibrated posterior, and nothing here is calibrated.
+
+### Explanations come from the arithmetic
+
+```text
++0.600  AUTHORIZATION_REPLAY_HISTORY: 1 authorization replay attempt(s) were
+        detected and refused on this mission (100% of the available weight)
++0.123  AMOUNT_NEAR_HARD_LIMIT: the amount is 96% of the hard limit, leaving
+        little headroom before the absolute ceiling (82% of the available weight)
+```
+
+`sum(factor.contribution) == raw_points` exactly — asserted by a unit test and by
+a Hypothesis property — so a reader can add the column up and get the score. No
+LLM is anywhere in this path, and no risk module may import one (a test checks
+the import graph). An explanation is the only part of a score a human reads, so
+it is the only part that can lie convincingly; the honest construction is the
+mechanical one.
+
+A factor exists only when it contributed something. An empty explanation says
+"no risk factors contributed" rather than nothing at all, because silence reads
+as "nothing was checked".
+
+### Placement: on demand, not in the mission path
+
+```text
+GET  /api/v1/missions/{id}/risk          computes, writes NOTHING
+POST /api/v1/missions/{id}/risk/assess   computes, records one RISK_ASSESSED event
+```
+
+The orchestrator does **not** call the risk engine, and this is a decision rather
+than an omission. Emitting an advisory event on every mission would put it
+permanently inside the hash-chained history Phase 5's replay reconstructs, would
+change every mission's event sequence, and would give the enforcement path a step
+whose only output is advice. Risk must never be a barrier before payment; the
+cleanest guarantee is that the payment path never calls it. The cost is real and
+is listed as remaining debt (RL-05): a mission nobody asks about has no
+assessment.
+
+Neither route accepts a body. Weights reach the engine only from the frozen
+module binding, so a request cannot score itself against different rules. A HIGH
+band returns 200 with advice — a route that returned 403 would be enforcing.
+
+### The RISK_ASSESSED event is inert in replay
+
+Audit events carry no version field, and Phase 5's reducer refuses an event type
+it does not recognise, so a new type cannot be silently dropped from a
+reconstruction. `RISK_ASSESSED` therefore gets a handler — and that handler
+touches nothing except a list no other rule reads. A mission replayed with the
+event present reconstructs identically to one without it; a test compares the
+whole projection field by field.
+
+It is **not** in `SECURITY_EVENT_TYPES`. A risk assessment is an opinion, and
+listing it beside `AUTHORIZATION_REPLAY_DETECTED` would put an opinion in the
+ordered history of refusals.
+
+The advisory reducer is deliberately lenient where every enforcement reducer
+refuses: a malformed `SECURITY_VIOLATION` means the security history cannot be
+reconstructed, while an unreadable advisory note costs the projection nothing.
+Refusing a whole replay because an advisory note was corrupt would hand the
+advisory layer the power to break a reconstruction — precisely the authority it
+must not have. Inert in the reducer does not mean exempt from the hash chain: a
+tampered `RISK_ASSESSED` payload still fails `/audit/verify`.
+
+The payload carries the verdict, the factor CODES, and the versions — never raw
+feature values, never the weight table, never a full digest.
+
+### No migration
+
+No `risk_scores` table. Assessments are computed on demand and optionally
+persisted as an existing-shape audit event; `audit_events.event_type` is
+`String(40)` and `payload` is `JSON`, so no DDL is required. `alembic check`
+reports no new upgrade operations. Nothing in the kernel reads a risk row, so a
+table would be decoration.
+
+### Measured evaluation (SYNTHETIC corpus)
+
+17 labelled scenarios × 10 iterations = 170 assessments, run through the REAL
+kernel in Phase 6's isolated per-run databases. **Every label is authored, not
+observed.** No real fraud data exists in this project and none is claimed.
+
+```text
+benign mean score      0.0200        risky mean score   0.5090
+mean separation        0.4890
+review threshold       0.25   (the operating point the engine actually uses)
+risk detection rate    100.00%   (100/100 risky flagged)
+false positive rate      0.00%   (0/70  benign flagged)
+false negative rate      0.00%   (0/100 risky missed)
+p50 / p95 / p99        10.87 / 17.96 / 24.64 ms   (harness-local; KL-07 applies)
+deterministic across iterations: true
+```
+
+Threshold sweep, reported and not tuned — nothing fits an operating point to
+these results:
+
+```text
+threshold   detection            false positives
+     0.10   100.00% (100/100)    14.29% (10/70)
+     0.25   100.00% (100/100)     0.00% (0/70)   <- configured
+     0.50    50.00% (50/100)      0.00% (0/70)
+     0.75    10.00% (10/100)      0.00% (0/70)
+```
+
+`risk_detection_rate` is **not** `attack_block_rate`. The block rate is a Phase 6
+security guarantee about the deterministic kernel; this is a quality measurement
+of an advisory heuristic over a synthetic corpus. They are separate metrics,
+computed by separate code over separate corpora, and conflating them would let a
+heuristic's accuracy be read as a security property.
+
+**Read the 100% / 0% honestly.** The exact supportable claim is "100% detection
+and 0% false positives across the 17 authored synthetic Phase 7 evaluation
+scenario families, at the configured review threshold of 0.25, across 10
+deterministic repetitions each" — not "100% fraud detection" and not "0% false
+positives in the real world". The corpus is small, trivially separable, authored
+after the weights by the same author, and there is no held-out set (RL-07..RL-09
+below). What these numbers legitimately support: the heuristic separates the two
+halves of this corpus, reproduces exactly across repetitions, and does not flag a
+legitimately-approved high-value purchase. What they do not support: any claim
+about real-world fraud, or about cases the corpus does not contain.
+
+### How the review threshold was chosen — and what that means for the metrics
+
+`review_threshold = 0.25`, and it is **not a free parameter**: it is the MEDIUM
+band boundary, tied to it structurally and pinned by
+`test_review_threshold_is_the_medium_boundary`. The band boundaries were derived
+from the four weight tiers (one SEVERE = 0.60 reads HIGH; two SEVERE saturate to
+CRITICAL), and that derivation is documented on the constants themselves in
+`config.py`. It was **not** re-tuned after observing evaluation results, and it
+cannot drift into a tunable without failing that test.
+
+**But there is no held-out set, and none is claimed.** The 17 scenarios were
+authored *after* the weights and threshold existed, by the same author. The
+corpus was therefore constructed with knowledge of the scoring rules, which
+makes every number below a **development-set metric**, not a generalization
+estimate. Reported as RL-07.
+
+### The corpus is trivially separable — stated, because it changes the reading
+
+```text
+minimum risky score      0.2807   (risky_amount_anomaly)
+maximum benign score     0.1307   (benign_high_value_authorized)
+separation margin       +0.1500   no overlap whatsoever
+synthetic authored ROC-AUC   1.0  (rank statistic over authored labels only)
+```
+
+Identical 100% / 0% results hold at every threshold from 0.15 to 0.25, so the
+headline is not knife-edge threshold-sensitive — but it is not sensitive because
+the benchmark contains no hard cases. A corpus with no overlap cannot distinguish
+a good scorer from an adequate one. Only one risky family sits within 0.05 of the
+threshold (`risky_amount_anomaly`, +0.0307); no benign family does. Reported as
+RL-08.
+
+The benign half is also narrower in output than in construction: five of its
+seven families (`benign_low_value`, `benign_cold_start_merchant`,
+`benign_established_merchant`, `benign_competitive_selection`,
+`benign_settled_payment`) are built differently but all score 0.0000 with no
+contributing factor, so the benign side exercises **three** distinct scoring
+outcomes rather than seven. Each of the ten risky families has a distinct factor
+signature. Reported as RL-09.
+
+### What "10 iterations" measures
+
+Deterministic repetition, not dataset diversity. Each iteration rebuilds its
+scenario in a **fresh isolated in-memory database** and re-runs the same
+construction; there is no randomisation and no seed strategy, and the harness
+asserts every family produced an identical score across all ten
+(`deterministic_across_iterations: true`). So:
+
+> **170 assessments = 17 authored scenario families × 10 deterministic
+> repetitions.** They are not 170 independent transactions. The repetitions
+> measure repeatability and construction stability; they add no semantic
+> coverage and do not widen the evidence base.
+
+### Metric formulas, fixed before the numbers
+
+```text
+T = review_threshold = 0.25            flagged  <=>  score >= T   (inclusive)
+
+risk_detection_rate = |{RISKY  : score >= T}| / |RISKY |  = 100/100
+false_positive_rate = |{BENIGN : score >= T}| / |BENIGN|  =   0/70
+false_negative_rate = |{RISKY  : score <  T}| / |RISKY |  =   0/100
+```
+
+`false_negative_rate == 1 − risk_detection_rate` by construction, computed from
+the same subset. Rates are re-derived from the evaluation rows, never stored
+constants. A rate over an empty denominator is `None` and renders `n/a`.
+
+### ML: not added
+
+`ML_ADDED: NO`. The deterministic baseline is complete, explainable, and its
+exact contributions are checkable. Adding a model would require labels, and the
+only labels available are the synthetic ones authored above — whose ground truth
+is defined by exactly the conditions the features measure. A model trained on
+them would learn the heuristic's own generative rule and report its own inputs
+back as a discovery: leakage by construction, not by accident. Adding XGBoost or
+an Isolation Forest to a corpus like this would produce a more impressive
+dependency list and strictly less interpretability.
+
+### Known limitations of the measurement (RL-01..RL-06)
+
+Reported on every evaluation run, and kept SEPARATE from the Phase 6 security
+limitations. A security limitation says an attacker could do something
+undetected; a risk limitation says a number means less than it looks like.
+
+```text
+RL-01  no user identity in the domain, so no per-user behavioural baseline
+RL-02  the score is a normalized risk index, not a fraud probability
+RL-03  the evaluation corpus is synthetic and its labels are authored
+RL-04  cross-mission merchant history is a bounded recent window (500 / 200)
+RL-05  the engine is not invoked automatically by the mission path
+RL-06  a recommendation is returned; no workflow consumes or enforces it
+RL-07  no held-out evaluation set; the reported rates are development-set metrics
+RL-08  the corpus is trivially separable (margin +0.1500, synthetic AUC 1.0)
+RL-09  five of seven benign families produce an identical zero-factor result
+```
+
+**KL-01 through KL-07 are unchanged and unfixed by Phase 7.** Phase 7 adds no
+cryptographic signing, no external audit anchor, no merchant authentication, and
+changes nothing about reconciliation. Latency here is harness-local for exactly
+the reasons KL-07 gives.
 
 ## Protocol adapters (corrected)
 

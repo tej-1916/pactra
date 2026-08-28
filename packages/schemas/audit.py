@@ -188,6 +188,33 @@ class ReplayedSecurityEvent(BaseModel):
     detail: dict = Field(default_factory=dict)
 
 
+class ReplayedRiskAssessment(BaseModel):
+    """An advisory risk assessment, reconstructed from a RISK_ASSESSED event.
+
+    Present in the projection so a replayed mission shows that the advisory
+    layer was consulted and what it concluded. Deliberately INERT: nothing here
+    participates in reconstructing mission state, authorization status, or
+    payment state, and the reducer's handler for this event type moves none of
+    them. A test replays the same mission with and without the event and asserts
+    every other field of the projection is identical — so an advisory record
+    cannot influence a reconstruction any more than it can influence a decision.
+
+    Carries only what the audit payload carries: the verdict, the factor codes,
+    and the versions. No feature values, no weights, no digest.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence: int
+    assessment_id: str | None = None
+    score: float | None = None
+    band: str | None = None
+    recommendation: str | None = None
+    engine_version: str | None = None
+    model_version: str | None = None
+    factor_codes: list[str] = Field(default_factory=list)
+
+
 class SkippedTransition(BaseModel):
     """A mission-state move the state machine does not permit, recorded rather
     than forced.
@@ -243,6 +270,9 @@ class MissionProjection(BaseModel):
     payment: ReplayedPayment = Field(default_factory=ReplayedPayment)
     security_events: list[ReplayedSecurityEvent] = Field(default_factory=list)
     skipped_transitions: list[SkippedTransition] = Field(default_factory=list)
+    #: Advisory only. Reconstructed for visibility; contributes to no other
+    #: field of this projection and to no state comparison.
+    risk_assessments: list[ReplayedRiskAssessment] = Field(default_factory=list)
 
 
 class StateComparison(BaseModel):
