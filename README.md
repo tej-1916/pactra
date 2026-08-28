@@ -74,11 +74,12 @@ pactra/
 │   ├── policy_engine/          # deterministic policy, normalization, ranking
 │   ├── payment_executor/       # provider protocol, idempotency, outbox (Phase 4)
 │   ├── risk_engine/            # advisory risk/anomaly scoring (Phase 7)
-│   ├── attack_lab/             # adversarial scenarios + runner (Phase 6)
+│   ├── attack_lab/             # adversarial scenarios, runner, metrics,
+│   │                           #   evaluation harness + CLI (Phase 6)
 │   └── audit_ledger/           # append-only hash-chained events + verify/replay
 ├── adapters/                   # CommerceAdapter, PaymentAuthorizationAdapter,
 │                               #   ToolAdapter, PaymentRailAdapter (Phase 8)
-├── benchmark/                  # security evaluation harness / real metrics (Phase 6)
+├── reports/attack-lab/         # generated evaluation JSON (gitignored)
 ├── packages/schemas/           # shared typed request/event/provenance schemas
 ├── infra/                      # Docker Compose (Postgres/Redis)
 ├── docs/architecture.md
@@ -117,7 +118,7 @@ Phase 4  Payment reliability: FakeProvider, idempotency, outbox,
          webhook verification, fault injection; Razorpay test  [DONE,
          Razorpay adapter partial — see below]
 Phase 5  Audit /verify endpoint + corruption test + event replay  [DONE]
-Phase 6  Adversarial Attack Lab + evaluation harness (real metrics)
+Phase 6  Adversarial Attack Lab + evaluation harness (real metrics) [DONE]
 Phase 7  Risk/anomaly engine (advisory only; ML optional)
 Phase 8  Protocol adapter correction (4 adapter families)
 Phase 9  Frontend, including the Adversarial Test Lab UI
@@ -161,6 +162,8 @@ uvicorn apps.api.pactra.main:app --reload   # http://127.0.0.1:8000/docs
 make lint         # ruff check
 make type-check   # mypy
 make test         # pytest (uses in-memory SQLite; no Postgres required)
+make attack       # adversarial attack lab, SQLite scenarios only
+make attack-full  # full evaluation incl. PostgreSQL concurrency attacks
 ```
 
 ### Try a mission
@@ -775,6 +778,279 @@ GET /api/v1/missions/{id}/replay          # read-only; gated on verification
 
 No external anchor for the audit chain, so tail truncation and whole-chain
 deletion remain undetectable (above). No Attack Lab or evaluation harness
-(Phase 6), no risk engine (Phase 7), no protocol adapters (Phase 8), no frontend
-(Phase 9). No cryptographic signing and no cryptographic merchant
-authentication, as in Phases 3 and 4.
+(delivered in Phase 6, below), no risk engine (Phase 7), no protocol adapters
+(Phase 8), no frontend (Phase 9). No cryptographic signing and no cryptographic
+merchant authentication, as in Phases 3 and 4.
+
+---
+
+## Phase 6 — adversarial attack lab + evaluation harness (implemented)
+
+Phase 6 stops describing PACTRA as secure and starts **measuring** it. 47
+scenarios run through the real kernel — 36 malicious, 10 benign controls, and 1
+demonstrated known limitation — and every number below came out of an executed
+run. Nothing is hardcoded and nothing is asserted into existence.
+
+```bash
+python -m services.attack_lab.run --list
+python -m services.attack_lab.run --all
+python -m services.attack_lab.run --scenario authorization_replay
+python -m services.attack_lab.run --category TRANSACTION --iterations 10
+python -m services.attack_lab.run --all --iterations 10 --require-postgres \
+    --out reports/attack-lab/run.json
+```
+
+### The lab builds hostile inputs; it never turns a control off
+
+There is no `disable_security` flag to find, because none exists. Scenarios
+construct what an attacker can actually construct — a merchant adapter that lies
+about its identity, a payload carrying injected instructions, a forged
+`CapabilitySet`, a provider whose 200 OK describes a different transaction — and
+call the same entry points production calls. Starting state is built by
+*calling* `issue_authorization` and `activate_authorization`, never by inserting
+a row with `status='ACTIVE'`: an authorization forged past the kernel would let a
+scenario "prove" a control that never ran.
+
+The one deliberate exception is the audit group, which corrupts rows **directly
+in the database**. That is what an attacker with database access does, and it is
+the only way to test the verifier instead of the writer.
+
+### Prompt injection, measured as causal influence
+
+Searching an audit log for "ignore the budget" and printing BLOCKED tests the
+search, not the system. So the scenario runs **two full missions** whose offers
+are byte-identical in every security-relevant field and differ only in free-form
+text, then compares decision, amount, ranking, bound transaction and event
+sequence. If injected content carried any authority the two would diverge:
+
+```text
+clean twin:  ALLOW  requested_amount=3799   AUTHORIZED
+injected:    ALLOW  requested_amount=3799   AUTHORIZED
+capabilities_escalated: []       payment_intents_created: 0
+injected_text_in_audit_payloads: false
+```
+
+The injected title is still persisted verbatim on the offer row — merchant
+content is *stored*, not laundered — and that is the point: it exists, and it
+influences nothing.
+
+### An exception is not a block
+
+```text
+setup raises            -> INCONCLUSIVE   the attack never ran
+declared backend absent -> INCONCLUSIVE   BACKEND_UNAVAILABLE
+execute raises          -> ERROR          proved nothing, in either direction
+execute returns         -> BLOCKED / NOT_BLOCKED, from the measured Observation
+```
+
+"Expected `AUTHORIZATION_REPLAY_DETECTED`, got a `TypeError`" is a scenario that
+established nothing, and recording it as a success would be exactly the
+fabrication this phase exists to prevent. ERROR and INCONCLUSIVE runs are
+excluded from every denominator and reported separately — never counted on the
+safe side.
+
+**Two harness bugs found this way, both of which would have lied confidently:**
+
+1. `provider_timeout_after_create` reported NOT_BLOCKED. Tracing all fourteen
+   steps showed the financial invariant had held perfectly — one create call, one
+   provider payment, one logical payment, the *original* payment recovered. The
+   scenario drove the worker with `drain`, which loops until the outbox empties;
+   handling a lost response enqueues its own reconciliation, so one drain ran
+   both turns and the scenario sampled the state *after* reconciliation resolved
+   it. Stepping one event at a time is what makes the uncertain state observable.
+2. Every audit tamper reported the verifier as broken. The tampers were raw SQL
+   binding `str(mission_id)`, and SQLAlchemy's `Uuid` column stores dash-less hex
+   on SQLite — so every statement matched **zero rows** and the untouched chain
+   correctly verified. They now use typed Core statements *and* assert the
+   statement changed a row; a tamper that touches nothing raises rather than
+   reporting a verdict.
+
+Neither was a PACTRA defect, and neither was papered over.
+
+### A check that cannot fail is not a check
+
+The critical duplicate-payment scenario is run in the test suite against a
+provider that records a payment and then denies holding it. A duplicate genuinely
+results, and the scenario must report NOT_BLOCKED:
+
+```text
+provider_payments_ever_created: 2   duplicate_effect: true
+recovered_original_payment: false   -> NOT_BLOCKED
+```
+
+Without that, the BLOCKED it reports for real PACTRA would be unfalsifiable. The
+same mutation test exists for prompt injection's differential comparison.
+
+### Benign controls, and why FP/FN needs them
+
+A kernel that denied everything would score a perfect block rate. Ten controls —
+an allowed transaction, human approval, valid consumption, a settled payment, an
+idempotent retry, transient-failure recovery, a genuine webhook, reconciliation,
+chain verification, trusted replay — run the same real paths with
+`expected_status = NOT_BLOCKED`. A control that comes back BLOCKED is counted as
+a false positive rather than quietly re-labelled.
+
+### Metric definitions
+
+Denominators exclude ERROR and INCONCLUSIVE. A rate over an empty denominator is
+`None` and prints as `n/a`, never as 0% or 100% — "zero attacks succeeded out of
+zero valid runs" is not perfect security.
+
+```text
+attack_block_rate            = blocked / decisive malicious runs
+attack_success_rate          = not_blocked / decisive malicious runs
+false_negative_rate          = the same quantity, stated rather than disguised
+false_positive_rate          = controls blocked / decisive control runs
+invariant_preservation_rate  = invariant_preserved / runs that measured one
+replay_attack_success_rate   = replays with an unauthorized effect / attempts
+duplicate_payment_rate       = runs with >1 logical or >1 provider payment / attempts
+reason_match_rate            = observed code == expected code / runs declaring one
+p50/p95/p99                  = nearest-rank over execute_ms of decisive runs
+```
+
+`false_negative_rate` and `attack_success_rate` are **identical** under these
+definitions: a false negative is a hostile scenario that came back NOT_BLOCKED.
+Both are reported because both are asked for, and the equality is stated instead
+of hidden by computing them over slightly different subsets.
+
+### Measured run
+
+Generated by `python -m services.attack_lab.run --all --iterations 10
+--require-postgres` on the development machine (Linux, Python 3.14, in-memory
+SQLite + local PostgreSQL 16 via `infra/docker-compose.yml`), 2026-08-28.
+Reproduce with that exact command; results are not committed.
+
+```text
+iterations 10     scenarios 47     runs 470     postgres exercised: yes
+
+attack runs                   360  (decisive 360)
+attacks blocked               360
+attacks NOT blocked             0
+errors                          0
+inconclusive                    0
+known-limitation runs          10  (excluded from attack rates)
+
+benign control runs           100  (decisive 100)
+controls correctly allowed    100
+controls wrongly blocked        0
+
+attack_block_rate             100.00%   = 360/360
+attack_success_rate             0.00%   = 0/360
+invariant_preservation_rate   100.00%   over 460 runs that measured one
+replay_attack_success_rate      0.00%   = 0/30
+duplicate_payment_rate          0.00%   = 0/40
+false_positive_rate             0.00%   = 0/100
+false_negative_rate             0.00%   = 0/360
+reason_match_rate             100.00%   = 320/320
+
+latency (attack execution only, harness-local — NOT production enforcement):
+  samples 470   p50 18.48 ms   p95 267.86 ms   p99 536.47 ms
+  min 1.59 ms   max 692.95 ms   mean 52.62 ms
+```
+
+Per category, all 10 iterations:
+
+| category | runs | blocked | not blocked | errors | inconclusive |
+|---|---|---|---|---|---|
+| INPUT_TRUST | 40 | 40 | 0 | 0 | 0 |
+| AUTHORITY | 30 | 30 | 0 | 0 | 0 |
+| TRANSACTION | 60 | 60 | 0 | 0 | 0 |
+| PAYMENT_RELIABILITY | 70 | 70 | 0 | 0 | 0 |
+| WEBHOOK | 30 | 30 | 0 | 0 | 0 |
+| AUDIT | 70 | 70 | 0 | 0 | 0 |
+| CONCURRENCY (PostgreSQL) | 60 | 60 | 0 | 0 | 0 |
+| BENIGN_CONTROL | 100 | 0 (correct) | 100 | 0 | 0 |
+| KNOWN_LIMITATION | 10 | — | 10 | 0 | 0 |
+
+The latency spread is honest rather than flattering: a scenario that runs two
+complete missions costs far more than one that presents a mutated digest, and
+`execute_ms` includes whichever it is. It measures this harness, not a
+deployment.
+
+### Scenario inventory
+
+**INPUT_TRUST** — merchant prompt injection · merchant identity spoof · merchant
+trust forgery · malformed agent output
+
+**AUTHORITY** — authority escalation (hard limit) · policy mutation (all seven
+protected fields) · capability escalation (five forged capability sets)
+
+**TRANSACTION** — hard budget bypass · transaction mutation (all nine bound
+fields) · authorization replay · stale authorization · policy-version mutation ·
+offer-version mutation
+
+**PAYMENT_RELIABILITY** — idempotency conflict · duplicate payment · provider
+timeout after create · provider amount / currency / idempotency-key mismatch ·
+wrong provider adapter
+
+**WEBHOOK** — forged signature (four forgeries) · duplicate/replayed webhook ·
+out-of-order and delayed webhook
+
+**AUDIT** — payload tamper · event_hash tamper · previous_hash tamper · actor
+tamper · payload edit *with* a recomputed hash · middle-event deletion · event
+injection (refused at two layers)
+
+**CONCURRENCY (PostgreSQL)** — concurrent authorization consumption · concurrent
+same-key payment · conflicting idempotency key · outbox double-claim ·
+conflicting terminal webhooks · concurrent audit append
+
+**BENIGN_CONTROL** — the ten legitimate flows listed above
+
+### PostgreSQL is where the races are proven
+
+SQLite serializes writers with a whole-database lock, so a race there is refused
+by the database declining to let the interleaving happen — not by the code under
+test. The six concurrency scenarios declare PostgreSQL and report INCONCLUSIVE
+with `BACKEND_UNAVAILABLE` when no server is reachable. They are never BLOCKED in
+that case, and never silently degraded to SQLite:
+
+```text
+pg_concurrent_authorization_consumption   8 attempts -> 1 winner, 7 refused
+                                          with AUTHORIZATION_REPLAY_DETECTED
+pg_concurrent_same_key_payment            8 attempts -> 1 created, 1 provider payment
+pg_conflicting_idempotency_key            1 created, 1 IDEMPOTENCY_CONFLICT,
+                                          loser's authorization left unspent
+pg_outbox_double_claim                    8 workers -> 1 claim, attempt count 1
+pg_concurrent_terminal_webhook_race       success + failure -> 1 transition
+pg_concurrent_audit_append                8 appends -> sequences 0..7, chain verifies
+```
+
+### Exit codes, for CI
+
+```text
+0  every hostile scenario blocked and every critical one exercised
+1  an attack got through, a control was wrongly blocked, a CRITICAL scenario
+   did not reach its expected outcome (including by erroring), or
+   --require-postgres was set with no server
+2  usage error
+```
+
+A CRITICAL scenario that ERRORs exits non-zero, deliberately: a critical control
+that could not be exercised is a critical control that was not proven.
+
+### Known limitations, reported every run
+
+These are **not findings**. A finding is a defect to fix; a limitation is
+something the design cannot do and does not claim to do. They are separate
+structures with separate report sections.
+
+| id | limitation |
+|---|---|
+| KL-01 | Tail truncation and whole-chain deletion are undetectable without an external anchor. **Demonstrated** by `audit_tail_truncation`, and never counted as a blocked attack. |
+| KL-02 | A terminal provider failure's reason code is not in the ledger, so replay cannot reconstruct it. |
+| KL-03 | Audit canonicalization is weaker than the transaction-digest encoder; historical hashes are preserved rather than rewritten. |
+| KL-04 | Authorizations are server-issued, not cryptographically signed. |
+| KL-05 | Merchant identity is registration-based, not cryptographic. |
+| KL-06 | Reconciliation trusts a provider that positively reports holding no payment. A provider that lies can induce a duplicate — measured directly, and it is the mutation test that proves the scenario can detect one. |
+| KL-07 | Reported latency is harness-local, not deployed enforcement latency. |
+
+### Not implemented in Phase 6
+
+No HTTP surface executes attacks — an endpoint that ran these would be an
+endpoint that creates authorizations and payments, so none was added. No new
+table and no migration: nothing in the kernel reads an evaluation report, and a
+migration whose only purpose is to look thorough is decoration. Reports are
+filesystem JSON under a gitignored `reports/attack-lab/`. No risk engine
+(Phase 7), no protocol adapters (Phase 8), no frontend (Phase 9). No
+cryptographic signing and no cryptographic merchant authentication, as in
+Phases 3, 4 and 5.

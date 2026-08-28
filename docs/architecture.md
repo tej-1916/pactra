@@ -556,13 +556,158 @@ type — inferring would be fabricating a value the events do not contain. The g
 is asserted by a test so it cannot drift unnoticed. Reason codes that ARE written
 into payloads (the uncertainty and reconciliation paths) reconstruct normally.
 
-## Adversarial validation
+## Adversarial Attack Lab (implemented, Phase 6)
 
-An Attack Lab runs named adversarial scenarios and records structured results
-(`attack_name, attack_input, expected_defense, observed_result, blocked/
-succeeded, reason_code, latency, affected_component`). An evaluation harness
-generates many normal and adversarial scenarios and reports metrics from real
-runs only.
+```text
+registry (explicit registration)
+     ↓
+runner: isolated backend per run → setup(ctx) → execute(ctx, state) → Observation
+     ↓                              ↑ INCONCLUSIVE       ↑ ERROR
+evaluation: N iterations × M scenarios → AttackRunReport
+     ↓
+metrics (measured) + text/JSON report + CLI exit code
+```
+
+`services/attack_lab/` runs 47 registered scenarios — 36 malicious, 10 benign
+controls, 1 demonstrated known limitation — through the REAL kernel. Nothing
+here is a stub that returns `blocked=True`.
+
+### The lab constructs hostile inputs; it never relaxes a control
+
+There is no `disable_security` flag, no test mode that weakens a check, and no
+path that writes a privileged status past the kernel. Scenarios build the things
+an attacker can actually build — a merchant adapter that lies about its
+identity, a payload carrying injected instructions, a forged `CapabilitySet`, a
+provider that answers 200 OK describing a different transaction — and call the
+same entry points production calls. The one exception is the audit-tamper group,
+which corrupts database rows DIRECTLY, because that is exactly what an attacker
+with database access does and it is the only way to test the verifier rather
+than the writer.
+
+Legitimate starting state is built by CALLING `issue_authorization` and
+`activate_authorization` under the `security-kernel` principal, never by
+inserting a row with `status='ACTIVE'`. An authorization forged by direct INSERT
+would let a scenario "prove" a control that never ran.
+
+### Prompt injection is measured as causal influence, not as string absence
+
+Searching an audit log for "ignore the budget" tests the search, not the system.
+The scenario instead runs two full missions whose offers are byte-identical in
+every security-relevant field and differ ONLY in free-form text, then compares
+the outcomes: decision, amount, ranking, bound transaction, event sequence. If
+injected content had any authority, the two would diverge. Equality across the
+whole snapshot is the finding; the canary search runs too, as a weaker second
+check.
+
+### Fail closed: an exception is not a block
+
+```text
+setup raises            -> INCONCLUSIVE   (the attack never ran)
+declared backend absent -> INCONCLUSIVE   (BACKEND_UNAVAILABLE)
+execute raises          -> ERROR          (proved nothing, in either direction)
+execute returns         -> BLOCKED / NOT_BLOCKED, from the measured Observation
+```
+
+"Expected AUTHORIZATION_REPLAY_DETECTED, got a TypeError" is a scenario that
+proved nothing, and recording it as a security success would be the exact
+fabrication this phase exists to prevent. ERROR and INCONCLUSIVE runs are
+excluded from every rate's denominator and reported separately — never counted
+on the safe side.
+
+Two failures caught during construction are worth recording, because both would
+have produced a confident wrong answer:
+
+* The timeout-after-create scenario drove the worker with `drain`, which loops
+  until the outbox empties. Handling a lost response enqueues its OWN
+  reconciliation, so one drain ran both turns and the scenario sampled the state
+  after reconciliation had already resolved it — reporting NOT_BLOCKED while the
+  financial invariant had held perfectly. Stepping one event at a time is what
+  makes the intermediate uncertain state observable.
+* The audit tampers were written as raw SQL binding `str(mission_id)`.
+  SQLAlchemy's `Uuid` column stores dash-less hex on SQLite, so every tamper
+  matched zero rows, the untouched chain verified, and all six scenarios reported
+  the verifier as broken. They now use typed Core statements AND assert the
+  statement changed a row; a tamper that touched nothing raises rather than
+  reporting a verdict.
+
+### Benign controls, and why FP/FN needs them
+
+A kernel that denied every request would score a perfect block rate. Ten benign
+controls run the same real paths with `expected_status = NOT_BLOCKED`, so a
+control that comes back BLOCKED is counted as a false positive rather than
+quietly re-labelled. Without them there is no honest false-positive rate at all.
+
+### Metric definitions
+
+Denominators exclude ERROR and INCONCLUSIVE; a rate over an empty denominator is
+`None` and renders as `n/a`, never as 0% or 100%.
+
+```text
+attack_block_rate            = blocked / decisive malicious runs
+attack_success_rate          = not_blocked / decisive malicious runs
+false_negative_rate          = the same quantity (stated, not disguised)
+false_positive_rate          = controls blocked / decisive control runs
+invariant_preservation_rate  = invariant_preserved is True / runs that measured one
+replay_attack_success_rate   = replays with an unauthorized effect / replay attempts
+duplicate_payment_rate       = runs with >1 logical or >1 provider payment / attempts
+reason_match_rate            = observed code == expected code / runs declaring one
+p50/p95/p99                  = nearest-rank over execute_ms of decisive runs
+```
+
+`false_negative_rate` and `attack_success_rate` are identical under these
+definitions — a false negative IS a hostile scenario that came back
+NOT_BLOCKED. Both names are reported because both are asked for, and the equality
+is stated rather than hidden by computing them from slightly different subsets.
+
+Latency is harness-local: in-process, in-memory SQLite (local PostgreSQL for the
+concurrency group), no network and no concurrent load. It detects a regression
+in this harness; it is not a deployed-enforcement figure.
+
+### Findings are derived, never authored
+
+`derive_findings` builds a `SecurityFinding` only from a hostile run that
+actually came back NOT_BLOCKED, copying that run's own measured effects in as
+evidence. There is no function that could produce one otherwise, which is how
+"do not invent findings" is enforced rather than merely intended.
+
+Known limitations are a SEPARATE structure. A finding is a defect that should be
+fixed; a limitation is something the design cannot do and does not claim to do.
+Reporting them together would make the honest disclosures look like defects.
+
+### Scenario isolation
+
+Every SQLite run gets its own in-memory engine with a freshly created schema,
+disposed afterwards; every PostgreSQL run truncates first. If scenario N could
+observe rows scenario N-1 left behind, "the payment intent count did not change"
+would stop being evidence about scenario N.
+
+### PostgreSQL is where the races are proven
+
+The six CONCURRENCY scenarios declare `Backend.POSTGRES`. With no server they
+report INCONCLUSIVE with `BACKEND_UNAVAILABLE` — never BLOCKED, and never
+silently degraded to SQLite, where the loser of a race is refused by the
+database rather than by the code under test.
+
+### CLI
+
+```bash
+python -m services.attack_lab.run --list
+python -m services.attack_lab.run --all
+python -m services.attack_lab.run --scenario authorization_replay
+python -m services.attack_lab.run --category TRANSACTION --iterations 10
+python -m services.attack_lab.run --all --json --out reports/attack-lab/run.json
+```
+
+Exit 0 when every hostile scenario was blocked and every critical one exercised;
+exit 1 on a bypass, a wrongly-blocked control, a CRITICAL scenario that did not
+reach its expected outcome (including by erroring), or `--require-postgres` with
+no server. A critical control that could not be exercised is a critical control
+that was not proven.
+
+**CLI only.** No HTTP surface executes attacks. An endpoint that ran these would
+be an endpoint that creates authorizations and payments, so Phase 6 does not add
+one. Reports are filesystem JSON under a gitignored `reports/attack-lab/`; no
+migration and no table were added, because nothing in the kernel reads them.
 
 ## Protocol adapters (corrected)
 

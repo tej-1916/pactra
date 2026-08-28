@@ -27,3 +27,8 @@ dist/
 # Local data
 data/
 *.db
+
+# Generated evaluation artifacts (Phase 6). A benchmark report committed by
+# default becomes a number nobody re-measures — and a stale one that still
+# looks authoritative. Regenerate with `python -m services.attack_lab.run`.
+reports/
