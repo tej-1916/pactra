@@ -116,7 +116,7 @@ Phase 3  Transaction binding + authorization + replay protection [DONE]
 Phase 4  Payment reliability: FakeProvider, idempotency, outbox,
          webhook verification, fault injection; Razorpay test  [DONE,
          Razorpay adapter partial — see below]
-Phase 5  Audit /verify endpoint + corruption test + event replay
+Phase 5  Audit /verify endpoint + corruption test + event replay  [DONE]
 Phase 6  Adversarial Attack Lab + evaluation harness (real metrics)
 Phase 7  Risk/anomaly engine (advisory only; ML optional)
 Phase 8  Protocol adapter correction (4 adapter families)
@@ -485,13 +485,14 @@ A "concurrency" test on SQLite runs under a regime that removes most of the
 concurrency, so the loser is refused by the database rather than by the logic
 being tested. **PostgreSQL is authoritative** for concurrent authorization
 consumption, concurrent same-key creation, idempotency conflicts, payment row
-locking, webhook races, `SKIP LOCKED` outbox claiming, and audit sequence
-serialization. Those tests skip loudly if no server is reachable — a guarantee
-that was not exercised must never look like one that was:
+locking, webhook races, `SKIP LOCKED` outbox claiming, audit sequence
+serialization, and verification of a concurrently written chain. Those tests
+skip loudly if no server is reachable — a guarantee that was not exercised must
+never look like one that was:
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d
-pytest -m postgres            # 14 PostgreSQL concurrency tests
+pytest -m postgres            # 17 PostgreSQL tests (concurrency + audit chain)
 ```
 
 No production behaviour is weakened to make SQLite imitate PostgreSQL.
@@ -541,9 +542,239 @@ python -m services.payment_executor.run_worker --provider fake
 
 ### Not implemented in Phase 4
 
-No audit `/verify` endpoint or mission replay (Phase 5), no Attack Lab or
-evaluation harness (Phase 6), no risk engine (Phase 7), no protocol adapters
-(Phase 8), no frontend (Phase 9). No cryptographic signing of user
-authorizations and no cryptographic merchant authentication — both remain
+No Attack Lab or evaluation harness (Phase 6), no risk engine (Phase 7), no
+protocol adapters (Phase 8), no frontend (Phase 9). No cryptographic signing of
+user authorizations and no cryptographic merchant authentication — both remain
 unimplemented, as in Phase 3. No transport-scoped security log for rejected
 webhooks.
+
+---
+
+## Phase 5 — tamper-evident audit + deterministic replay (implemented)
+
+Phase 5 proves two things and claims nothing beyond them:
+
+```text
+AUDIT EVENT MODIFIED  ->  VERIFICATION FAILURE
+REPLAY                ->  READ-ONLY DETERMINISTIC STATE RECONSTRUCTION
+```
+
+No new migration. Both features read the `audit_events` table Phase 1 already
+built; a snapshot, checkpoint or version table added for architectural
+decoration would be a schema change with no invariant behind it.
+
+### One hash function, and the bug that made it necessary
+
+`compute_event_hash` is the only place an event hash is produced — the ledger
+calls it when writing, the verifier calls it when recomputing. A verifier with
+its own implementation either reports tampering that did not happen or misses
+tampering that did, and the drift stays invisible until it matters.
+
+Building the verifier surfaced a real defect. `created_at` is inside the hash
+preimage; the writer passes an aware UTC value, but SQLite has no
+timezone-aware type and returns a **naive** datetime on read, whose
+`isoformat()` drops the `+00:00`. Recomputing from a persisted row produced a
+different hash from the one stored beside it — so every chain verified inside
+the writing session and failed the moment it was re-read, which is exactly what
+`/verify` does.
+
+The fix is `as_utc` normalization **inside** `compute_event_hash`, so both
+callers get it. It is exact, not a guess: values are written as UTC
+unconditionally. For an already-aware UTC input — every value the writer has
+ever passed — the encoding is byte-identical, so **no historical event hash
+changed**, and a test pins that.
+
+The audit chain deliberately keeps its original canonical JSON rather than
+adopting the stronger type-tagged encoder used for transaction digests.
+Switching would change the preimage of every event and invalidate every hash
+already written, so compatibility is preserved and the difference documented
+instead of silently reconciled.
+
+### Verification
+
+```text
+GET /api/v1/missions/{id}/audit/verify
+```
+
+```json
+{ "valid": true, "events_checked": 17 }
+```
+
+```json
+{ "valid": false, "events_checked": 6,
+  "first_invalid_sequence": 5, "reason_code": "AUDIT_EVENT_HASH_MISMATCH" }
+```
+
+Checks run in order — structure, position, genesis, linkage, recomputed hash —
+and only the FIRST failure is reported. Tampering with one event invalidates its
+own hash and every link after it; listing all of them would present one act of
+tampering as dozens of findings and bury the position that matters.
+
+```text
+AUDIT_VALID | AUDIT_SEQUENCE_GAP | AUDIT_PREVIOUS_HASH_MISMATCH
+AUDIT_EVENT_HASH_MISMATCH | AUDIT_GENESIS_INVALID | AUDIT_EVENT_MALFORMED
+```
+
+**The verifier never writes.** No repair path, no recompute-on-read, nothing
+staged on the session. Tamper evidence is worthless if the verifier repairs
+what it exists to detect, so the corruption tests re-read every tampered row
+afterwards and assert it is still exactly as the attacker left it.
+
+Corruption is proved by editing database rows directly, past the application —
+because an attacker with database access does not go through `append_event`.
+21 tests cover: payload edit, actor edit, event-type edit, `event_hash` edit,
+`previous_hash` edit, a payload edit WITH a recomputed hash (caught one event
+later by the next link), sequence renumbering, middle deletion, first-event
+deletion, event injection, corrupt genesis, five malformed-row shapes, and two
+tests that verification itself changes nothing.
+
+### What a per-mission chain cannot detect — stated, not papered over
+
+* **Tail truncation.** Deleting the last k events leaves `0..N-k-1`: still
+  contiguous, still correctly linked. Detecting it needs an anchor outside the
+  chain — a signed head, an external witness, a cross-mission ledger. Phase 5
+  builds none of those.
+* **Whole-chain deletion.** A mission with no events is indistinguishable from
+  one whose events were all removed.
+
+Middle deletion, reordering, renumbering, injection and any edit to a hashed
+field ARE detected.
+
+### Replay
+
+```text
+GET /api/v1/missions/{id}/replay
+```
+
+```text
+EVENT HISTORY  ->  PURE DETERMINISTIC REDUCER  ->  RECONSTRUCTED STATE
+```
+
+Replay is a projection, not a rerun. It calls no merchant, no payment provider,
+no authorization issuer, no executor and no webhook handler; it creates no
+payment, consumes no authorization, appends no audit event and writes no row.
+
+That is structural rather than disciplinary, and proved three independent ways:
+
+1. **Import graph.** `services/audit_ledger/replay.py` is parsed by a test and
+   may not import `services.payment_executor`, `services.security_kernel`, or
+   the merchant adapters. The only `services` imports permitted are the mission
+   state-machine predicates and the ledger's read path. A reducer that CAN reach
+   an executor eventually will be asked to.
+2. **Landmines.** `append_event`, `issue_authorization`, `consume_authorization`,
+   `activate_authorization`, `create_payment_intent`, `dispatch_create`,
+   `reconcile_intent`, `handle_webhook`, `enqueue_outbox_event`, both provider
+   methods and both merchant-transport methods are each replaced with a function
+   that raises. Replay of a mission with a full payment history touches none.
+3. **Row census.** Every table counted before and after, with a commit in
+   between: `audit_events`, `authorizations`, `payment_intents`, `outbox_events`,
+   `webhook_events`, `missions` — all unchanged. Ten repeated replays accumulate
+   nothing and return byte-identical results.
+
+### Determinism
+
+`reduce_events` reads no clock, generates no UUID, consults no environment and
+performs no I/O. Timestamps are copied verbatim from event payloads as strings,
+never parsed and re-formatted. 100 reductions of one event stream produce one
+distinct serialized result, and reversing the retrieval order changes nothing —
+the reducer sorts by `sequence`, which is the ordering the hash chain itself
+commits to.
+
+### The integrity gate
+
+```text
+events -> verify -> invalid ? REFUSED: trusted=false, state=null
+                 -> valid   ? deterministic replay
+```
+
+An invalid chain yields **no projection at all** — not a projection with a
+warning attached. A caller handed a state object will use it, and a flag beside
+it does not stop that.
+
+### Unknown events: fail closed
+
+Audit events carry no schema or version field, and Phase 5 adds none. The
+policy covers the thing that actually varies: an `event_type` this build does
+not recognize is REFUSED (`REPLAY_UNSUPPORTED_EVENT_TYPE`).
+
+An unrecognized event may be a security event, and a projection that silently
+drops it does not merely omit information — it misrepresents what happened while
+presenting itself as a faithful reconstruction. Every one of the 33 declared
+`EventType` values has a reducer, and a test asserts the handler table equals the
+enum exhaustively, so a new event type added without a rule fails a test rather
+than distorting a projection. A known type with an uninterpretable payload is
+refused the same way (`REPLAY_MALFORMED_EVENT`).
+
+### Replay vs. persisted state
+
+```json
+{ "replay_state": "PAYMENT_SUCCEEDED",
+  "persisted_state": "PAYMENT_SUCCEEDED", "matches": true }
+```
+
+DIAGNOSTIC ONLY. A mismatch is reported and **never repaired**: the rows are what
+the kernel enforces against, and letting a reconstruction overwrite them would
+hand authority to the derived view. Where neither side holds an authorization or
+a payment, the comparison reports `null` rather than `true`.
+
+Replay is verified against eight real mission histories, each produced by the
+actual kernel rather than hand-written events: ALLOW, REQUIRE_APPROVAL, DENY,
+human approval over HTTP, the authorization lifecycle (created / activated /
+consumed / revoked), a replayed authorization, a transaction-binding failure,
+payment success, a lost-response timeout resolved by reconciliation, a transient
+retry, a terminal failure, a webhook-settled payment with a duplicate delivery,
+an idempotent retry, and an authority-escalation + identity-spoof attack.
+
+### What replay cannot reconstruct
+
+`last_reason_code` is `None` after a terminal provider failure.
+`apply_payment_transition` writes `reason_code` to the `payment_intents` COLUMN
+but not into the audit payload, so `PROVIDER_TERMINAL_FAILURE` is not in the
+ledger. Replay leaves the field unknown rather than inferring it from the event
+type — inferring would be fabricating a value the events do not contain. A test
+asserts both halves (the column has it, the projection does not) so the gap
+cannot drift unnoticed. Reason codes that ARE written into payloads (the
+uncertainty and reconciliation paths) reconstruct normally.
+
+### Measured cost
+
+Real numbers from `pytest tests/test_audit_performance.py -s` on the development
+machine, SQLite, in-process. Not a benchmark claim — the assertions in that file
+are loose on purpose, sized to catch an accidental quadratic rather than a
+millisecond regression, because a flaky performance gate teaches people to ignore
+failures.
+
+| events | verify | replay | verify/event | replay/event |
+|---|---|---|---|---|
+| 100 | 4.6 ms | 1.6 ms | 45.6 µs | 16.0 µs |
+| 500 | 12.0 ms | 4.2 ms | 24.1 µs | 8.5 µs |
+| 1000 | 25.8 ms | 9.2 ms | 25.7 µs | 9.2 µs |
+
+Both are linear in chain length, asserted as a same-process RATIO between a
+100-event and a 1000-event chain so machine speed cancels out. **No cache was
+added**: none is needed at this cost, and a cache in front of a tamper-evidence
+check is a way to serve a stale "valid" for a chain that has since been altered.
+
+### PostgreSQL
+
+Three Phase 5 tests join the PostgreSQL suite (17 total). Eight concurrent
+legitimate appends produce sequences `0..7` whose `previous_hash` links verify —
+the stronger property, since the existing test only proved the numbers came out
+contiguous. Corruption is proved on PostgreSQL as well as SQLite because the two
+backends round-trip timestamps differently, so a verifier correct on one could
+still be wrong on the other. `append_event`'s `SELECT … FOR UPDATE` is unchanged.
+
+### Endpoints added
+
+```text
+GET /api/v1/missions/{id}/audit/verify    # read-only; repairs nothing
+GET /api/v1/missions/{id}/replay          # read-only; gated on verification
+```
+
+### Not implemented in Phase 5
+
+No external anchor for the audit chain, so tail truncation and whole-chain
+deletion remain undetectable (above). No Attack Lab or evaluation harness
+(Phase 6), no risk engine (Phase 7), no protocol adapters (Phase 8), no frontend
+(Phase 9). No cryptographic signing and no cryptographic merchant
+authentication, as in Phases 3 and 4.

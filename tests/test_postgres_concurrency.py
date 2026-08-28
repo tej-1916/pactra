@@ -24,6 +24,8 @@ that was not exercised must never be reported as one that was.
 import asyncio
 
 import pytest
+from apps.api.db.models import AuditEventRow
+from packages.schemas.audit import AuditReasonCode
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import (
     payment_executor_capabilities,
@@ -36,6 +38,8 @@ from packages.schemas.payment import (
     WebhookEventType,
 )
 from services.audit_ledger.ledger import append_event, list_events
+from services.audit_ledger.replay import replay_mission
+from services.audit_ledger.verify import verify_mission_chain
 from services.payment_executor.intents import (
     IdempotencyConflict,
     create_payment_intent,
@@ -58,7 +62,7 @@ from services.security_kernel.authorization import (
     issue_authorization,
     load_authorization,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from tests.conftest import FIXED_EXPIRY, approved_transaction, authorized_mission, make_mission
 
 pytestmark = pytest.mark.postgres
@@ -579,3 +583,128 @@ async def test_pg_concurrent_audit_appends_remain_contiguous(pg_sessionmaker):
         event.previous_hash == ("0" * 64 if index == 0 else events[index - 1].event_hash)
         for index, event in enumerate(events)
     )
+
+
+async def test_pg_concurrently_written_chain_verifies(pg_sessionmaker):
+    """8 concurrent legitimate appends produce a chain that VERIFIES.
+
+    The test above proves the sequences come out contiguous. This one proves the
+    stronger property Phase 5 depends on: the `previous_hash` links written
+    under genuine row-lock contention recompute correctly, so serialization did
+    not merely produce tidy numbers but a chain a verifier accepts.
+
+    PostgreSQL is authoritative here. SQLite serializes writers with a
+    whole-database lock and ignores FOR UPDATE, so a chain written "concurrently"
+    there was never written concurrently at all.
+    """
+    async with pg_sessionmaker() as setup:
+        mission = await make_mission(setup)
+        mission_id = mission.id
+        await setup.commit()
+
+    async def append(index: int) -> None:
+        async with pg_sessionmaker() as session:
+            await append_event(
+                session,
+                mission_id=mission_id,
+                event_type=EventType.SECURITY_VIOLATION,
+                actor=f"concurrent-{index}",
+                payload={"index": index, "reason_code": "AUTHORITY_ESCALATION"},
+            )
+            await session.commit()
+
+    await asyncio.gather(*(append(index) for index in range(8)))
+
+    async with pg_sessionmaker() as check:
+        verification = await verify_mission_chain(check, mission_id)
+        events = await list_events(check, mission_id)
+
+    assert verification.valid is True, verification.detail
+    assert verification.events_checked == 8
+    assert verification.reason_code is AuditReasonCode.AUDIT_VALID
+    assert [event.sequence for event in events] == list(range(8))
+
+
+async def test_pg_tampering_a_concurrently_written_chain_is_detected(pg_sessionmaker):
+    """Tamper evidence holds on PostgreSQL too, not only on SQLite.
+
+    The timestamp round trip differs between the two backends — PostgreSQL
+    returns timezone-aware values where SQLite returns naive ones — so a
+    verifier that got the normalization right on one could still be wrong on the
+    other. Running the corruption case on both closes that.
+    """
+    async with pg_sessionmaker() as setup:
+        mission = await make_mission(setup)
+        mission_id = mission.id
+        for index in range(6):
+            await append_event(
+                setup,
+                mission_id=mission_id,
+                event_type=EventType.PAYMENT_ATTEMPTED,
+                actor="payment-executor",
+                payload={"index": index, "state": "PROCESSING"},
+            )
+        await setup.commit()
+
+    async with pg_sessionmaker() as clean:
+        assert (await verify_mission_chain(clean, mission_id)).valid is True
+
+    async with pg_sessionmaker() as attacker:
+        await attacker.execute(
+            update(AuditEventRow)
+            .where(AuditEventRow.mission_id == mission_id, AuditEventRow.sequence == 3)
+            .values(payload={"index": 3, "state": "SUCCEEDED"})
+            .execution_options(synchronize_session=False)
+        )
+        await attacker.commit()
+
+    async with pg_sessionmaker() as check:
+        verification = await verify_mission_chain(check, mission_id)
+        replayed = await replay_mission(check, mission_id)
+
+    assert verification.valid is False
+    assert verification.reason_code is AuditReasonCode.AUDIT_EVENT_HASH_MISMATCH
+    assert verification.first_invalid_sequence == 3
+    # And the integrity gate refuses to reconstruct from it.
+    assert replayed.trusted is False
+    assert replayed.state is None
+
+
+async def test_pg_replay_reconstructs_a_payment_written_across_sessions(pg_sessionmaker):
+    """Replay on the backend production actually runs on.
+
+    The intent, the provider call and the settlement are each written by a
+    SEPARATE session, exactly as the worker does it, so the chain being replayed
+    spans transactions rather than living in one uncommitted unit of work.
+    """
+    provider = FakePaymentProvider()
+
+    async with pg_sessionmaker() as setup:
+        mission, authorization, _ = await authorized_mission(setup)
+        mission_id = mission.id
+        await create_payment_intent(
+            setup,
+            capabilities=payment_executor_capabilities(),
+            mission_id=mission_id,
+            authorization_id=authorization.authorization_id,
+            idempotency_key="idem-pg-replay",
+            provider="fake",
+        )
+        await setup.commit()
+
+    await drain(pg_sessionmaker, provider=provider)
+
+    async with pg_sessionmaker() as check:
+        result = await replay_mission(check, mission_id)
+        events = await list_events(check, mission_id)
+
+    assert result.audit_valid is True, result.verification.detail
+    assert result.trusted is True
+    assert result.events_replayed == len(events)
+    assert result.state is not None
+    assert result.state.payment.state == PaymentIntentState.SUCCEEDED.value
+    assert result.state.authorization.status == AuthorizationStatus.CONSUMED.value
+    assert result.comparison is not None
+    assert result.comparison.matches is True
+    assert result.comparison.payment_matches is True
+    assert result.comparison.authorization_matches is True

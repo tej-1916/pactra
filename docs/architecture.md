@@ -392,22 +392,169 @@ locking, webhook races, `SKIP LOCKED` outbox claiming, and audit sequence
 serialization. Those tests skip loudly when no server is reachable. No
 production behaviour is weakened to make SQLite reproduce PostgreSQL semantics.
 
-## Event history + replay
-
-Important transitions are stored as append-only events, enabling deterministic
-`REPLAY MISSION` — reconstructing mission state purely from history.
-
-## Tamper-evident audit ledger
+## Tamper-evident audit ledger (implemented, Phase 5)
 
 ```text
 event_id, mission_id, sequence, event_type, actor, payload,
 previous_hash, event_hash, created_at
 ```
 
-`event_hash = SHA256(canonical_event_body + previous_hash)`. A verification
-endpoint recomputes the chain and returns `{ "valid": true, "events_checked": N }`;
-any modification yields `AUDIT_INTEGRITY_FAILURE`. Tamper-evident, not a
-blockchain.
+`event_hash = SHA256(canonical_json({mission_id, sequence, event_type, actor,
+payload, previous_hash, created_at}))`, with `previous_hash` inside the
+preimage. Tamper-evident, **not** a blockchain.
+
+### One hash function, both directions
+
+`compute_event_hash` is the only place an event hash is produced. The ledger
+calls it when appending; the verifier calls it when recomputing. There is
+deliberately no second "verification" implementation — a verifier that hashes
+slightly differently from the writer either reports tampering that did not
+happen or misses tampering that did, and the drift stays invisible until it
+matters.
+
+### Audit payload canonicalization
+
+`created_at` is inside the preimage, so the verifier has to present the exact
+instant the writer did. The writer always passes an aware UTC value, but SQLite
+has no timezone-aware type and returns a **naive** datetime on read, whose
+`isoformat()` omits the `+00:00` offset. Recomputing from a persisted row
+therefore produced a different hash from the one stored beside it — every chain
+verified inside the writing session and failed the moment it was re-read, which
+is exactly the condition `/verify` runs under.
+
+The fix is `as_utc` normalization **inside** `compute_event_hash`, so both
+callers get it. It is exact rather than a guess: values are written as UTC
+unconditionally, so attaching UTC on read restores the original instant. For an
+already-aware UTC input — every value the writer has ever passed — the encoding
+is byte-identical, so **no historical event hash changed**. A test pins that.
+
+Canonical JSON gives stable dict key order (`sort_keys`), compact separators,
+and an exact JSON round trip for the strings, integers, booleans, nulls, nested
+objects and float values these payloads carry.
+
+**Compatibility limitation, stated rather than reconciled.** This is NOT the
+type-tagged, domain-separated encoder in `packages/schemas/canonical.py` used
+for transaction digests. That encoder is stronger — it makes `1`, `"1"` and
+`true` unable to collide and rejects floats outright — but switching the audit
+chain to it would change the preimage of every event and invalidate every
+`event_hash` already written. Historical hash semantics are preserved instead.
+
+### Verification
+
+```text
+GET /api/v1/missions/{id}/audit/verify   ->  { "valid": true, "events_checked": 17 }
+```
+
+Order events by `sequence`, then per event: structure → position → genesis →
+linkage → recomputed hash. Only the FIRST failure is reported; tampering with
+one event invalidates its own hash and every link after it, so listing all of
+them would present one act of tampering as dozens of findings.
+
+```text
+AUDIT_VALID | AUDIT_SEQUENCE_GAP | AUDIT_PREVIOUS_HASH_MISMATCH
+AUDIT_EVENT_HASH_MISMATCH | AUDIT_GENESIS_INVALID | AUDIT_EVENT_MALFORMED
+```
+
+The verifier **never writes**. Not to `event_hash`, `previous_hash`, `sequence`,
+or `payload`; there is no repair path and no recompute-on-read. Tamper evidence
+is worthless if the verifier repairs what it exists to detect.
+
+### What a per-mission chain cannot detect
+
+Stated as gaps, because they are:
+
+* **Tail truncation.** Deleting the last k events leaves `0..N-k-1` — still
+  contiguous, still correctly linked. Detecting it needs an anchor outside the
+  chain (a signed head, an external witness, a cross-mission ledger). Phase 5
+  builds none of those.
+* **Whole-chain deletion.** A mission with no events is indistinguishable from
+  one whose events were all removed. Same missing anchor.
+
+Deleting a MIDDLE event, reordering, renumbering, injecting an event, and any
+edit to a hashed field are all detected.
+
+## Event history + replay (implemented, Phase 5)
+
+```text
+EVENT HISTORY  ->  PURE DETERMINISTIC REDUCER  ->  RECONSTRUCTED STATE
+```
+
+Replay is a **projection, not a rerun**. It does not call a merchant, a payment
+provider, the authorization issuer, the payment executor, or a webhook handler;
+it creates no payment, consumes or issues no authorization, appends no audit
+event, and writes no row. That is structural rather than disciplinary:
+`services/audit_ledger/replay.py` imports nothing from
+`services.payment_executor`, `services.security_kernel`, or the merchant
+adapters, and a test parses the module's imports to keep it so. The only
+`services` imports are the mission state-machine predicates and the ledger's
+read path.
+
+`reduce_events` reads no clock, generates no UUID, consults no environment, and
+performs no I/O. Timestamps in the projection are copied verbatim out of event
+payloads as strings — never parsed and re-formatted, because a round trip is
+where a precision or locale choice would sneak in.
+
+### The integrity gate
+
+```text
+events -> verify chain -> invalid ? replay REFUSED (trusted=false, state=null)
+                       -> valid   ? deterministic replay
+```
+
+An invalid chain yields **no projection at all** — not a projection with a
+warning attached. A caller handed a state object will use it, and a flag beside
+it does not stop that. `reduce_events` remains callable directly for
+diagnostics; the API only reaches it through the gate.
+
+### Reconstructing the payment state
+
+The payment state is read from the `state` field `apply_payment_transition`
+stamps into every payment transition payload — never inferred from the event
+type. `PAYMENT_FAILED` is emitted for BOTH a retryable and a terminal failure,
+and only the recorded state distinguishes them. Mission-state advance uses the
+same `can_transition` guard as `apply_mission_state`, so an illegal move is
+skipped and recorded rather than forced — which is what makes the replayed state
+*equal* the persisted state instead of merely resembling it.
+
+### Unknown events: fail closed
+
+Audit events carry no schema or version field, and Phase 5 adds none — a
+migration whose only purpose is to look forward-compatible is decoration. The
+policy is about the thing that actually varies: an `event_type` this build does
+not recognize.
+
+That policy is REFUSAL (`REPLAY_UNSUPPORTED_EVENT_TYPE`). An unrecognized event
+may be a security event, and a projection that silently drops it does not merely
+omit information — it misrepresents what happened while presenting itself as a
+faithful reconstruction. Every event type this build declares has a handler, and
+a test asserts the handler table equals the `EventType` enum exhaustively, so a
+new event type added without a reducer rule fails a test rather than distorting
+a projection. A known type with an uninterpretable payload is refused the same
+way (`REPLAY_MALFORMED_EVENT`).
+
+### Persisted-state comparison
+
+```text
+{ "replay_state": "PAYMENT_SUCCEEDED", "persisted_state": "PAYMENT_SUCCEEDED",
+  "matches": true }
+```
+
+DIAGNOSTIC ONLY. A mismatch is reported and **nothing is repaired**. Replay is
+observability here, not recovery: the rows are what the kernel enforces against,
+and letting a reconstruction overwrite them would hand authority to the derived
+view. Where neither side holds an authorization or a payment, the comparison
+reports `null` rather than `true` — claiming agreement about something that does
+not exist is an assertion with no content behind it.
+
+### What replay cannot reconstruct
+
+`ReplayedPayment.last_reason_code` is `None` after a terminal provider failure.
+`apply_payment_transition` writes `reason_code` to the `payment_intents` COLUMN
+but not into the audit payload, so `PROVIDER_TERMINAL_FAILURE` is not in the
+ledger. Replay leaves the field unknown instead of inferring it from the event
+type — inferring would be fabricating a value the events do not contain. The gap
+is asserted by a test so it cannot drift unnoticed. Reason codes that ARE written
+into payloads (the uncertainty and reconciliation paths) reconstruct normally.
 
 ## Adversarial validation
 

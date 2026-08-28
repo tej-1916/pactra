@@ -1,14 +1,24 @@
-"""Mission API routes (Phase 1 + Phase 3 authorization lifecycle)."""
+"""Mission API routes (Phase 1 + Phase 3 authorization + Phase 5 audit/replay).
+
+The two Phase 5 routes are READ ONLY in the strong sense: they append no audit
+event, mutate no mission, and repair nothing they find broken. A verification
+endpoint that healed a chain would destroy the evidence it exists to surface,
+and a replay endpoint that reconciled the mission row would make a derived
+projection authoritative over the rows the kernel actually enforces against.
+"""
 
 from __future__ import annotations
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from packages.schemas.audit import AuditVerificationResult, MissionReplayResult
 from packages.schemas.domain import CreateMissionRequest, EventType, MissionState
 from services.agent_orchestrator.orchestrator import Orchestrator
 from services.agent_orchestrator.state_machine import assert_transition
 from services.audit_ledger.ledger import append_event, list_events
+from services.audit_ledger.replay import replay_mission
+from services.audit_ledger.verify import verify_mission_chain
 from services.security_kernel.authorization import (
     AuthorizationFailure,
     activate_authorization,
@@ -157,6 +167,43 @@ async def get_events(
         )
         for r in rows
     ]
+
+
+@router.get("/missions/{mission_id}/audit/verify", response_model=AuditVerificationResult)
+async def verify_audit_chain(
+    mission_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> AuditVerificationResult:
+    """Recompute the mission's hash chain and report whether it is intact.
+
+    READ ONLY. Nothing is rewritten — not `event_hash`, not `previous_hash`, not
+    `sequence`, not `payload`. Tamper evidence is worthless if the verifier
+    repairs what it is supposed to detect, so there is no repair path to reach.
+
+    A valid chain answers `{"valid": true, "events_checked": N}`; a broken one
+    adds `first_invalid_sequence` and a `reason_code` naming how it broke. An
+    unknown mission is a 404, the same as every other mission route.
+    """
+    await _load_mission(session, mission_id)
+    return await verify_mission_chain(session, mission_id)
+
+
+@router.get("/missions/{mission_id}/replay", response_model=MissionReplayResult)
+async def replay_mission_state(
+    mission_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> MissionReplayResult:
+    """Reconstruct mission state from the event history alone.
+
+    READ ONLY, and deliberately gated: the chain is verified first, and a chain
+    that does not verify yields `trusted: false` with NO reconstructed state
+    attached. Returning a projection alongside a warning flag would hand callers
+    exactly the object they would read past the flag to reach.
+
+    The response also carries a diagnostic `comparison` of the replayed state
+    against the persisted rows. A mismatch is REPORTED and never repaired —
+    replay is observability here, not recovery.
+    """
+    await _load_mission(session, mission_id)
+    return await replay_mission(session, mission_id)
 
 
 @router.get("/offers/{mission_id}", response_model=list[OfferOut])
