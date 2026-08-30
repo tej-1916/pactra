@@ -146,6 +146,11 @@ async def create_mission(
     request: CreateMissionRequest, session: AsyncSession = Depends(get_session)
 ) -> MissionOut:
     mission = await Orchestrator().run(session, request)
+    # SUCCESS_RESPONSE_IMPLIES_DURABLE_COMMIT. The whole mission — its offers,
+    # policy decision, authorization and audit events — becomes durable in one
+    # commit here, before the response body is built, so a caller that reads
+    # the mission the instant it sees this 201 cannot race the write.
+    await session.commit()
     return await _mission_out(session, mission)
 
 
@@ -288,6 +293,9 @@ async def approve_authorization(
     assert_transition(MissionState(mission.state), MissionState.AUTHORIZED)
     mission.state = MissionState.AUTHORIZED.value
     await session.flush()
+    # The verified proof, the ACTIVE authorization and the AUTHORIZED mission
+    # commit together, before the caller is told the approval succeeded.
+    await session.commit()
     return _authorization_out(activated)
 
 

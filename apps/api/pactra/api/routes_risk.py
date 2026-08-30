@@ -94,4 +94,7 @@ async def assess_and_record(
     except MissionNotFound as missing:
         raise HTTPException(status_code=404, detail="mission not found") from missing
     await record_assessment(session, assessment)
+    # 201 claims an audit event was created, so it is durable before the
+    # caller can act on that claim.
+    await session.commit()
     return assessment

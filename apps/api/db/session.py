@@ -73,12 +73,41 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency: one session per request, committed on success."""
+    """FastAPI dependency: one session per request. The HANDLER owns the commit.
+
+    WHY THIS DOES NOT COMMIT
+    ------------------------
+    It used to. The exit code of a dependency with ``yield`` runs when FastAPI
+    closes the request's ``AsyncExitStack``, and that happens AFTER
+    ``await response(scope, receive, send)`` — after the bytes are already on
+    their way to the caller. Committing there means a client can observe a 201
+    describing a row that is not yet durable, and a read issued immediately
+    afterwards races the commit. Measured against a real server, a create
+    followed by an immediate read of the same mission returned 404 for roughly
+    83-92% of attempts.
+
+    So the transaction boundary moved out to the route handler, which is the
+    outermost edge of the HTTP unit of work and the only place that can commit
+    BEFORE the response is constructed. This also matches how the rest of the
+    repository already works: the payment worker, the attack lab, and the risk
+    harness each commit their own unit of work explicitly.
+
+    WHY THE SUCCESS PATH ROLLS BACK
+    -------------------------------
+    Anything a handler did not explicitly commit is discarded. Committing here
+    as a safety net would silently reintroduce the very ordering this function
+    exists to prevent, and would do it for exactly the routes nobody remembered
+    to look at. Discarding instead makes a forgotten commit fail loudly and
+    immediately — the mutation simply does not happen — rather than working in
+    tests and racing in production. Every read-only route is unaffected: a
+    rollback on a session that wrote nothing is a no-op.
+    """
     maker = get_sessionmaker()
     async with maker() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise
+        else:
+            await session.rollback()

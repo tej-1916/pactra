@@ -183,6 +183,10 @@ async def request_payment(
             detail={"reason_code": rejected.reason_code, "detail": rejected.detail},
         ) from rejected
 
+    # The payment intent, the authorization consumption and the outbox event
+    # were written in one transaction; they become durable together here,
+    # before the caller learns a payment exists to be polled for.
+    await session.commit()
     response.status_code = 201 if result.created else 200
     return _payment_out(result.intent)
 
@@ -253,6 +257,10 @@ async def receive_webhook(
             detail={"reason_code": rejected.reason_code},
         ) from rejected
 
+    # A provider treats a 2xx as "delivered, do not resend". The state
+    # transition this webhook caused must therefore be durable before the ack
+    # is written, or an accepted-but-lost event is never redelivered.
+    await session.commit()
     return WebhookAck(
         accepted=outcome.accepted,
         applied=outcome.applied,
