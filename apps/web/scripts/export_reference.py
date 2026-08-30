@@ -151,7 +151,9 @@ def build() -> dict[str, Any]:
         },
         "vocabulary": {
             "_generated": BANNER,
-            "_source": "packages/schemas/*, services/attack_lab/models.py, services/risk_engine/models.py",
+            "_source": (
+                "packages/schemas/*, services/attack_lab/models.py, services/risk_engine/models.py"
+            ),
             "invariantContract": _invariant_contract(),
             "missionStates": [s.value for s in MissionState],
             "eventTypes": [e.value for e in EventType],
@@ -179,7 +181,9 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for name, payload in build().items():
         target = OUT_DIR / f"{name}.generated.json"
-        target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        target.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
         print(f"wrote {target.relative_to(REPO_ROOT)}")
     return 0
 
