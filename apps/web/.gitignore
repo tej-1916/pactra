@@ -1,0 +1,14 @@
+# Frontend build artifacts the repository-root .gitignore does not already cover.
+# `node_modules/` and `.next/` are ignored at the root (lines 11-12); only what is
+# specific to this workspace is listed here.
+
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# The console holds no credentials, and none should be introduced: a value that
+# reaches the browser is public. `.env.example` documents the two server-side
+# variables and is committed deliberately.
+.env
+.env.*
+!.env.example
