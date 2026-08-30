@@ -33,6 +33,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import Capability, CapabilitySet, security_kernel_capabilities
 from packages.schemas.merchant import MerchantAuthMethod, MerchantIdentity
@@ -708,7 +709,7 @@ ADAPTER_AUTHORIZATION_FORGERY = AttackScenario(
         "any of them to land in, and an honest intent carrying an external "
         "authorization reference is translated with an explicit "
         "EXTERNAL_AUTHORIZATION_REFERENCE_NOT_VERIFIED warning, because PACTRA has no "
-        "signature verification (KL-04). Zero authorization rows are created."
+        "verifier for that external reference. Zero authorization rows are created."
     ),
     target_invariants=(
         "EXTERNAL AUTHORIZATION TOKEN -> NEVER A PACTRA AUTHORIZATION",
@@ -847,6 +848,7 @@ async def _mutation_setup(context: Any) -> dict[str, Any]:
             capabilities=security_kernel_capabilities(),
             mission_id=mission_id,
             transaction=transaction,
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
         )
         authorization_id = row.authorization_id
         await activate_authorization(session, authorization_id=authorization_id)
@@ -1438,7 +1440,7 @@ async def _registry_bypass_execute(context: Any, state: dict[str, Any]) -> Obser
     # resolved adapter actually has. ``object.__setattr__`` is deliberately NOT
     # tested: it bypasses every frozen model in the repository and requires
     # arbitrary in-process code execution, at which point the attacker already
-    # holds everything. That is the same scoping KL-04 applies to an attacker
+    # holds everything. That is the same scoping the trust model applies to an attacker
     # who holds the database — a boundary cannot be measured against someone
     # already inside it.
     descriptor = REGISTRY.describe(MCP_ADAPTER)

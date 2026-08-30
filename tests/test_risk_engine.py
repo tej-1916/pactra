@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 from apps.api.db.models import AuditEventRow, Mission
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.capability import security_kernel_capabilities
 from packages.schemas.domain import (
     CreateMissionRequest,
@@ -165,6 +166,7 @@ async def test_history_becomes_available_once_enough_observations_exist(session)
                 amount_inr=1000,
                 nonce=generate_nonce(),
             ),
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
         )
     await session.commit()
 

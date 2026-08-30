@@ -10,11 +10,12 @@ carrying a server-held nonce, and consumable exactly once by a conditional
 UPDATE. The two are not the same kind of thing and the gap between them is not
 bridgeable by parsing.
 
-Bridging it would need a cryptographic verifier, and **PACTRA has none.** There
-is no user signing, no signature verification, and no ``VERIFIED_USER_POLICY``
-authority level anywhere in this repository (KL-04). So this family produces a
-``CandidateAuthorizationRequest`` and the flow continues through the controls
-that already exist:
+Bridging it would need protocol-specific cryptographic trust, and PACTRA has
+none. The USER_ED25519 verifier accepts only a server-built PACTRA challenge
+under the pre-enrolled demo key; it does not validate arbitrary external
+authorization artifacts or create a ``VERIFIED_USER_POLICY`` authority level.
+So this family produces a ``CandidateAuthorizationRequest`` and the flow
+continues through the controls that already exist:
 
     external authorization representation
         -> adapter parsing

@@ -139,8 +139,8 @@ PROTOCOL_SUPPORT: tuple[ProtocolSupport, ...] = (
         not_supported=(
             "There is no AP2 adapter. No AP2 message schema is documented anywhere in "
             "this repository, and honouring an external authorization artifact would "
-            "additionally require cryptographic verification, which PACTRA does not have "
-            "(KL-04)."
+            "additionally require an AP2-specific trust and cryptographic verification "
+            "design, which PACTRA does not have."
         ),
         reason=(
             "Writing AP2 message schemas from memory would invent the semantics of "
@@ -219,8 +219,9 @@ PROTOCOL_SUPPORT: tuple[ProtocolSupport, ...] = (
         ),
         not_supported=(
             "It issues nothing and verifies nothing. Any external authorization "
-            "reference is carried as an opaque, explicitly unverified string, because "
-            "PACTRA implements no signature verification (KL-04)."
+            "reference is carried as an opaque, explicitly unverified string. The "
+            "USER_ED25519 verifier accepts only PACTRA's own challenge and does not "
+            "authenticate external protocol references."
         ),
         reason=(
             "PACTRA-native, so implementing it invents nobody's semantics. It is what "

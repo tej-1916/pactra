@@ -99,11 +99,16 @@ def canonical_bytes(fields: Mapping[str, CanonicalValue]) -> bytes:
     ).encode("ascii")
 
 
+def canonical_message(domain: str, fields: Mapping[str, CanonicalValue]) -> bytes:
+    """Domain-separated canonical bytes suitable for hashing or signing.
+
+    This is the one repository-wide envelope for security messages.  Callers
+    provide canonical values, never request JSON or caller-provided bytes.
+    """
+    require(bool(domain), "canonical.message_has_domain", "a message must be domain-separated")
+    return domain.encode("ascii") + _DOMAIN_SEPARATOR + canonical_bytes(fields)
+
+
 def canonical_digest(domain: str, fields: Mapping[str, CanonicalValue]) -> str:
     """SHA-256 over ``domain || 0x1f || canonical_bytes(fields)``, as lowercase hex."""
-    require(bool(domain), "canonical.digest_has_domain", "a digest must be domain-separated")
-    digest = hashlib.sha256()
-    digest.update(domain.encode("ascii"))
-    digest.update(_DOMAIN_SEPARATOR)
-    digest.update(canonical_bytes(fields))
-    return digest.hexdigest()
+    return hashlib.sha256(canonical_message(domain, fields)).hexdigest()

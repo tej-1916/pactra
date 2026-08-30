@@ -25,6 +25,7 @@ import asyncio
 
 import pytest
 from apps.api.db.models import AuditEventRow
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.audit import AuditReasonCode
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import (
@@ -79,7 +80,11 @@ async def _active_authorization(pg_sessionmaker):
         mission = await make_mission(setup)
         txn = approved_transaction(expires_at=FIXED_EXPIRY, nonce=generate_nonce())
         row = await issue_authorization(
-            setup, capabilities=KERNEL, mission_id=mission.id, transaction=txn
+            setup,
+            capabilities=KERNEL,
+            mission_id=mission.id,
+            transaction=txn,
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
         )
         await activate_authorization(setup, authorization_id=row.authorization_id)
         await setup.commit()

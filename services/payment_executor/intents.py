@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from apps.api.db.models import AuthorizationRow, Mission, PaymentIntentRow
+from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import Capability, CapabilitySet
 from packages.schemas.domain import EventType, MissionState, ReasonCode, as_utc, utcnow
 from packages.schemas.payment import (
@@ -69,7 +70,7 @@ from services.payment_executor.state_machine import assert_payment_transition
 from services.security_kernel.authorization import (
     AuthorizationNotFound,
     consume_authorization,
-    rebuild_bound_transaction,
+    verify_authorization_for_payment,
 )
 from services.security_kernel.capability_registry import enforce_registered
 
@@ -231,9 +232,32 @@ async def create_payment_intent(
             f"authorization {authorization_id} does not belong to mission {mission_id}"
         )
 
-    # Rebuild from server-held state and re-verify the digest. Raises if the
-    # stored row no longer re-derives to what was approved.
-    transaction = rebuild_bound_transaction(authorization)
+    existing = await find_by_idempotency_key(session, idempotency_key)
+
+    mission = await session.get(Mission, mission_id)
+    if mission is None:
+        raise PaymentRequestRejected(f"mission {mission_id} does not exist")
+    if existing is None and mission.state != MissionState.AUTHORIZED.value:
+        # Checked before proof verification, but still before every write.  An
+        # idempotent retry is allowed to observe PAYMENT_PENDING and return its
+        # already-durable intent below.
+        raise MissionNotAuthorized(
+            f"mission {mission_id} is {mission.state}, expected {MissionState.AUTHORIZED.value}"
+        )
+
+    # Phase 3 reconstruction always precedes proof verification.  A retry of
+    # this authorization is already CONSUMED; a conflicting key held by some
+    # other payment must leave this authorization ACTIVE and unspent.
+    transaction = await verify_authorization_for_payment(
+        session,
+        row=authorization,
+        expected_status=(
+            AuthorizationStatus.CONSUMED
+            if existing is not None and existing.authorization_id == authorization_id
+            else AuthorizationStatus.ACTIVE
+        ),
+        now=moment,
+    )
 
     fingerprint = request_fingerprint(
         mission_id=mission_id,
@@ -246,24 +270,12 @@ async def create_payment_intent(
     )
 
     # Fast path: this key already named a payment.
-    existing = await find_by_idempotency_key(session, idempotency_key)
     if existing is not None:
         return await _resolve_existing(
             session,
             existing=existing,
             fingerprint=fingerprint,
             idempotency_key=idempotency_key,
-        )
-
-    mission = await session.get(Mission, mission_id)
-    if mission is None:
-        raise PaymentRequestRejected(f"mission {mission_id} does not exist")
-    if mission.state != MissionState.AUTHORIZED.value:
-        # A payment may only begin from an authorized mission. The authorization
-        # status is checked again, independently, by the consume below — this is
-        # the mission-level half of the same precondition.
-        raise MissionNotAuthorized(
-            f"mission {mission_id} is {mission.state}, expected {MissionState.AUTHORIZED.value}"
         )
 
     intent_id = uuid.uuid4()

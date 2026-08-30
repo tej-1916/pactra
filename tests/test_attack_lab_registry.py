@@ -29,6 +29,7 @@ from services.attack_lab.scenarios import (
     PHASE6_CANONICAL_SCENARIOS,
     REQUIRED_ADAPTER_SCENARIOS,
     REQUIRED_SCENARIOS,
+    REQUIRED_SIGNED_APPROVAL_SCENARIOS,
 )
 
 pytestmark = pytest.mark.attack_lab
@@ -58,6 +59,21 @@ def test_registry_contains_every_required_phase8_adapter_scenario():
     assert all(
         registry.get(scenario_id).category is AttackCategory.ADAPTER
         for scenario_id in REQUIRED_ADAPTER_SCENARIOS.values()
+    )
+
+
+def test_registry_contains_small_signed_approval_expansion():
+    registry = load_registry()
+    missing = {
+        requirement: scenario_id
+        for requirement, scenario_id in REQUIRED_SIGNED_APPROVAL_SCENARIOS.items()
+        if not registry.has(scenario_id)
+    }
+    assert not missing, f"required signed-approval scenarios are not registered: {missing}"
+    assert len(REQUIRED_SIGNED_APPROVAL_SCENARIOS) == 4
+    assert all(
+        registry.get(scenario_id).category is AttackCategory.TRANSACTION
+        for scenario_id in REQUIRED_SIGNED_APPROVAL_SCENARIOS.values()
     )
 
 

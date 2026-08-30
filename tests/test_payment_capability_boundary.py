@@ -10,6 +10,7 @@ that reached it another way (an in-process tool call, a future adapter, a bug).
 import uuid
 
 import pytest
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import (
     Capability,
@@ -305,6 +306,7 @@ async def test_a_forged_capability_set_cannot_mint_an_authorization(session):
             capabilities=forged,
             mission_id=mission.id,
             transaction=approved_transaction(expires_at=FIXED_EXPIRY, nonce=generate_nonce()),
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
         )
     assert exc.value.capability is Capability.AUTHORIZATION_ISSUE
 
@@ -344,6 +346,7 @@ async def test_a_forged_kernel_capability_set_is_also_refused(session):
             capabilities=partial,
             mission_id=mission.id,
             transaction=approved_transaction(expires_at=FIXED_EXPIRY, nonce=generate_nonce()),
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
         )
 
     # The genuine registry set still works, so the guard is not simply broken.
@@ -352,5 +355,6 @@ async def test_a_forged_kernel_capability_set_is_also_refused(session):
         capabilities=security_kernel_capabilities(),
         mission_id=mission.id,
         transaction=approved_transaction(expires_at=FIXED_EXPIRY, nonce=generate_nonce()),
+        approval_scheme=ApprovalScheme.POLICY_AUTO,
     )
     assert row.status == "PENDING"

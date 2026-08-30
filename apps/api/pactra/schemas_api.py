@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from packages.schemas.approval import SIGNATURE_HEX_LENGTH
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OfferOut(BaseModel):
@@ -54,8 +55,9 @@ class AuthorizationOut(BaseModel):
     attacker cannot otherwise guess. Nothing outside the kernel needs it, so
     nothing outside the kernel receives it.
 
-    This artifact is SERVER-ISSUED, not cryptographically signed — Phase 3
-    implements no signing, so no field here claims one.
+    The artifact remains server-issued. ``USER_ED25519`` activation additionally
+    carries a LOCAL CRYPTOGRAPHIC APPROVAL PROOF made by the pre-enrolled demo
+    approver; the full signature is deliberately not exposed by this read model.
     """
 
     authorization_id: uuid.UUID
@@ -65,6 +67,8 @@ class AuthorizationOut(BaseModel):
     binding_version: str
     policy_version: str
     offer_version: str
+    approval_scheme: str
+    signing_key_id: str | None
     issued_at: datetime
     expires_at: datetime
     consumed_at: datetime | None
@@ -73,6 +77,39 @@ class AuthorizationOut(BaseModel):
     bound_quantity: int
     bound_amount_inr: int
     bound_currency: str
+
+
+class ApprovalRequest(BaseModel):
+    """Proof submission. Algorithm and public key are intentionally absent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    signing_key_id: str = Field(min_length=1, max_length=120)
+    signature: str = Field(
+        min_length=SIGNATURE_HEX_LENGTH,
+        max_length=SIGNATURE_HEX_LENGTH,
+        pattern=r"^[0-9a-f]+$",
+    )
+
+
+class BoundTransactionSummary(BaseModel):
+    merchant: str
+    product: str
+    quantity: int
+    amount: int
+    currency: str
+    expiry: datetime
+
+
+class ApprovalChallengeOut(BaseModel):
+    authorization_id: uuid.UUID
+    mission_id: uuid.UUID
+    binding_version: str
+    transaction_digest: str
+    signing_key_id: str
+    approval_scheme: str
+    approval_message_hex: str
+    transaction: BoundTransactionSummary
 
 
 class MissionOut(BaseModel):

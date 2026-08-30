@@ -8,6 +8,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import security_kernel_capabilities
 from packages.schemas.domain import EventType
@@ -41,6 +42,7 @@ async def _active_authorization(session, **txn_overrides):
         capabilities=KERNEL,
         mission_id=mission.id,
         transaction=txn,
+        approval_scheme=ApprovalScheme.POLICY_AUTO,
         issued_at=NOW,
     )
     await activate_authorization(session, authorization_id=row.authorization_id, now=NOW)
@@ -254,6 +256,7 @@ async def test_two_racing_requests_cannot_both_consume(concurrent_sessionmaker):
             capabilities=KERNEL,
             mission_id=mission.id,
             transaction=txn,
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
             issued_at=NOW,
         )
         await activate_authorization(setup, authorization_id=row.authorization_id, now=NOW)
@@ -314,6 +317,7 @@ async def test_concurrent_consume_tasks_yield_exactly_one_winner(concurrent_sess
             capabilities=KERNEL,
             mission_id=mission.id,
             transaction=txn,
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
             issued_at=NOW,
         )
         await activate_authorization(setup, authorization_id=row.authorization_id, now=NOW)
@@ -361,6 +365,7 @@ async def test_a_stale_in_memory_copy_cannot_consume(concurrent_sessionmaker):
             capabilities=KERNEL,
             mission_id=mission.id,
             transaction=txn,
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
             issued_at=NOW,
         )
         await activate_authorization(setup, authorization_id=row.authorization_id, now=NOW)

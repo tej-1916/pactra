@@ -26,6 +26,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.capability import Capability
 from packages.schemas.domain import PolicyOutcome, ReasonCode
 from packages.schemas.provenance import AuthorityLevel
@@ -310,6 +311,7 @@ async def _capability_execute(context: Any, state: dict[str, Any]) -> Observatio
             capabilities=capability_set,
             mission_id=mission_id,
             transaction=context.bound_transaction(),
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
         )
 
     # (a) The buyer agent — what an LLM acts through — simply asserts the

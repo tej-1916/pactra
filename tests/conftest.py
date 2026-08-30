@@ -14,6 +14,7 @@ Three engines are provided deliberately:
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -22,9 +23,56 @@ from apps.api.db import models  # noqa: F401  (register metadata)
 from apps.api.db.base import Base
 from apps.api.db.session import configure_sqlite_transactions
 from httpx import ASGITransport, AsyncClient
+from packages.schemas.approval import ApprovalScheme
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+
+
+@dataclass(frozen=True)
+class DemoSigner:
+    """In-memory external demo signer used only by signed-approval tests."""
+
+    signing_key_id: str
+    private_key: object
+
+    def sign_hex(self, message: bytes) -> str:
+        return self.private_key.sign(message).hex()  # type: ignore[attr-defined]
+
+
+@pytest.fixture
+def demo_signer(monkeypatch) -> DemoSigner:
+    """Configure only the public half in PACTRA; retain private state in test."""
+    from apps.api.pactra.config import get_settings
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key_id = "pytest-demo-user-ed25519-v1"
+    private_key = Ed25519PrivateKey.generate()
+    public_hex = (
+        private_key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        .hex()
+    )
+    monkeypatch.setenv("DEMO_APPROVER_SIGNING_KEY_ID", key_id)
+    monkeypatch.setenv("DEMO_APPROVER_PUBLIC_KEY_HEX", public_hex)
+    get_settings.cache_clear()
+    yield DemoSigner(signing_key_id=key_id, private_key=private_key)
+    get_settings.cache_clear()
+
+
+async def approve_with_demo_signer(client, mission_id: str, signer: DemoSigner):
+    challenge = await client.get(f"/api/v1/missions/{mission_id}/authorization/challenge")
+    assert challenge.status_code == 200, challenge.text
+    body = challenge.json()
+    signature = signer.sign_hex(bytes.fromhex(body["approval_message_hex"]))
+    return await client.post(
+        f"/api/v1/missions/{mission_id}/authorization/approve",
+        json={"signing_key_id": signer.signing_key_id, "signature": signature},
+    )
 
 
 @pytest_asyncio.fixture
@@ -304,6 +352,7 @@ async def authorized_mission(session, *, amount_inr: int = 3799, quantity: int =
 
     Returns (mission, authorization_row, bound_transaction).
     """
+    from apps.api.db.models import PolicyDecisionRow
     from packages.schemas.capability import security_kernel_capabilities
     from services.security_kernel.authorization import (
         activate_authorization,
@@ -319,11 +368,25 @@ async def authorized_mission(session, *, amount_inr: int = 3799, quantity: int =
         nonce=generate_nonce(),
         **overrides,
     )
+    session.add(
+        PolicyDecisionRow(
+            mission_id=mission.id,
+            decision="ALLOW",
+            policy_version=txn.policy_version,
+            reason_codes=["WITHIN_LIMITS"],
+            requested_amount=txn.amount_inr,
+            soft_budget=txn.amount_inr,
+            hard_limit=txn.amount_inr,
+            selected_offer_id=None,
+        )
+    )
+    await session.flush()
     row = await issue_authorization(
         session,
         capabilities=security_kernel_capabilities(),
         mission_id=mission.id,
         transaction=txn,
+        approval_scheme=ApprovalScheme.POLICY_AUTO,
     )
     await activate_authorization(session, authorization_id=row.authorization_id)
     mission.state = "AUTHORIZED"

@@ -17,13 +17,13 @@ UNTRUSTED (must retain provenance + taint)
 
 TRUSTED ONLY AFTER VALIDATION
 - values that passed strict schemas + invariant checks
-- verified authorizations (nonce + transaction digest)
+- verified authorizations (nonce + transaction digest + explicit approval origin)
 - deterministic policy decisions
 - provider webhooks with a verified signature
 
 PRIVILEGED (never reachable from untrusted data or the LLM directly)
 - payment executor
-- authorization / signing material
+- authorization state and the pre-enrolled demo approver public key
 - policy configuration and hard limits
 - capability grants
 ```
@@ -42,12 +42,10 @@ USER POLICY
       >  MERCHANT DATA
 ```
 
-The top level is named `USER_POLICY`, not "user-signed policy": it is
-authoritative because it is established server-side at the trusted API boundary,
-**not** because it carries a cryptographic signature. No signing exists yet. A
-`VERIFIED_USER_POLICY` level may be introduced if real signing is ever
-implemented. Phase 3 did NOT implement it — it delivered transaction binding and
-server-issued authorization artifacts instead — so the level is still absent and
+The top level remains `USER_POLICY`, not "user-signed policy". The new proof
+signs one transaction approval, not a general policy or a new authority level.
+PACTRA therefore does not introduce `VERIFIED_USER_POLICY`; the existing
+authority lattice remains unchanged and
 the name does not claim a guarantee the code cannot deliver.
 
 Example: merchant content asserting `budget = ₹100000` targets USER_POLICY from
@@ -208,7 +206,8 @@ authorization can never be consumed.
 ```text
 authorization_id, mission_id, transaction_digest, nonce, issued_at,
 expires_at, status, policy_version, offer_version, binding_version,
-consumed_at, bound_{merchant_id, product_id, quantity, amount_inr, currency}
+consumed_at, bound_{merchant_id, product_id, quantity, amount_inr, currency},
+approval_scheme, signing_key_id, approval_signature
 ```
 
 ```text
@@ -218,16 +217,12 @@ PENDING  --activate-->  ACTIVE  --consume-->  CONSUMED   (terminal)
    +-----------------------+--revoke--> REVOKED          (terminal)
 ```
 
-**This is a server-issued authorization artifact, NOT a cryptographically
-signed one.** Phase 3 implements no signing and no signature verification. The
-artifact is authoritative because it is minted, held, and consumed entirely
-inside the trusted server boundary — never because it carries a verifiable user
-signature. The 256-bit `nonce` is server-held entropy that makes each
-authorization unique and its digest unpredictable; it is not a key, not a token
-issued to a client, and is never returned by the API or written to an audit
-payload. Cryptographic user signatures remain future work, and the
-`VERIFIED_USER_POLICY` authority level anticipated in Phase 2 is therefore still
-not introduced.
+The artifact remains server-issued, but its activation origin is explicit.
+`POLICY_AUTO` represents a deterministic `ALLOW` and is not user approval.
+`USER_ED25519` requires a LOCAL CRYPTOGRAPHIC APPROVAL PROOF from a pre-enrolled
+DEMO USER-CONTROLLED SIGNING KEY. Migrated `LEGACY_SERVER` rows are explicitly
+classified and fail closed for payment. The 256-bit `nonce` remains server-held
+entropy; it is not a client token and is never returned or audited.
 
 Issuance is gated by the `authorization.issue` capability, which is held only by
 the `security-kernel` principal and explicitly **denied** to `buyer-agent`. That
@@ -272,7 +267,59 @@ Audit events for the lifecycle: `AUTHORIZATION_CREATED`,
 `AUTHORIZATION_REVOKED`, `AUTHORIZATION_REPLAY_DETECTED`,
 `TRANSACTION_BINDING_FAILURE`. Payloads carry a truncated digest prefix — enough
 to correlate events across a mission, not enough to be a copy of the artifact —
-and never the nonce.
+and never the nonce. Successful `USER_ED25519` activation instead records the
+full digest plus safe scheme/key/authorization metadata; it never records the
+signature or private key.
+
+## LOCAL CRYPTOGRAPHIC APPROVAL PROOF (signed-authorization hardening)
+
+The fixed algorithm is Ed25519 and the fixed domain is
+`pactra-user-approval-v1`. Using the same type-tagged, sorted canonical encoder
+as transaction binding, the server constructs:
+
+```text
+"pactra-user-approval-v1" || 0x1f || canonical_json({
+  authorization_id, mission_id, binding_version,
+  transaction_digest, signing_key_id
+})
+```
+
+The signature encoding is exactly 128 lowercase hexadecimal characters (64
+bytes). No endpoint accepts an algorithm, public key, arbitrary JSON message,
+or caller-provided message bytes. The configured signing key ID resolves one
+pre-enrolled public key. The corresponding private key is generated, stored,
+and used only by the external demo signer.
+
+The Phase 3 `pactra-txn-bind-v1` digest and its nine bound fields are unchanged.
+The approval protocol signs that authoritative digest plus mission,
+authorization, binding-version, and key context; it does not define another
+transaction canonicalization. The challenge exposes those canonical fields,
+exact message bytes as hex, and a readable merchant/product/quantity/amount/
+currency/expiry summary. It does not expose the nonce, so the demo signer cannot
+independently reconstruct the transaction digest.
+
+Verification is fail-closed at three points:
+
+1. before atomically changing `PENDING` to `ACTIVE`;
+2. inside intent creation before consumption, intent/outbox insertion, or
+   mission transition; and
+3. inside dispatch immediately before provider lookup/create, together with a
+   durable intent/authorization comparison.
+
+Invalid proofs that reach the approval handler have their safe rejection audit
+committed before an HTTP error is raised. Request-schema failures occur before
+the handler and have no mission audit event. The security kernel is the single
+source of `AUTHORIZATION_ACTIVATED`, removing the former route/orchestrator
+duplicate.
+
+This proves only local transaction approval by the configured demo key. It is
+not production user identity, WebAuthn or passkey support, non-repudiation,
+cryptographic merchant authentication, or independent security validation.
+Limitations: one demo approver; no user/account system or authenticated approval
+HTTP principal; local-key theft compromises approval; no credential recovery or
+rotation UX; no trusted payment-detail display; broad server/provider compromise
+is outside this proof; merchant authentication and external audit anchoring are
+absent.
 
 ## Payment reliability (implemented, Phase 4)
 
@@ -1089,10 +1136,9 @@ RL-08  the corpus is trivially separable (margin +0.1500, synthetic AUC 1.0)
 RL-09  five of seven benign families produce an identical zero-factor result
 ```
 
-**KL-01 through KL-07 are unchanged and unfixed by Phase 7.** Phase 7 adds no
-cryptographic signing, no external audit anchor, no merchant authentication, and
-changes nothing about reconciliation. Latency here is harness-local for exactly
-the reasons KL-07 gives.
+Phase 7 itself changed none of KL-01 through KL-07. The later signed-approval
+hardening narrows KL-04 to the explicitly limited demo-key model; external audit
+anchoring, merchant authentication, and reconciliation remain unchanged.
 
 ## Protocol adapters (corrected)
 
@@ -1192,8 +1238,9 @@ Adapter-originated bindings use Phase 3 unchanged; amount, currency, merchant,
 product and quantity mutations all recompute the existing digest and fail
 consumption.
 
-No migration and no dependency were required. No authenticated protocol ingress
-or external signature verifier exists. ACP, AP2 and x402 stay planned. Razorpay
+No migration and no dependency were required by Phase 8. No authenticated
+protocol ingress or verifier for external authorization references exists. ACP,
+AP2 and x402 stay planned. Razorpay
 stays partial/test-mode with every Phase 4 limitation unchanged.
 
 ## Authority principle (unchanged from v1, restated)

@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 from apps.api.db.models import Mission
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.capability import security_kernel_capabilities
 from packages.schemas.payment import PaymentIntentState
 from services.risk_engine.anomaly import (
@@ -38,6 +39,7 @@ async def _authorize(session, *, merchant_id: str, amount: int, index: int) -> u
             amount_inr=amount,
             nonce=generate_nonce(),
         ),
+        approval_scheme=ApprovalScheme.POLICY_AUTO,
     )
     await session.flush()
     return mission.id

@@ -353,10 +353,10 @@ class CandidateAuthorizationRequest(BaseModel):
     reach.
 
     ``external_authorization_reference`` is an opaque correlation string. PACTRA
-    does NOT verify it and holds no verifier that could: there is no user
-    signing and no signature verification anywhere in the system (KL-04). It is
-    carried so a caller can correlate its own records, and a warning saying it
-    was not verified travels on every envelope that contains one.
+    does NOT verify it and has no protocol-specific trust/verifier for it. The
+    USER_ED25519 verifier accepts only PACTRA's own server-built challenge; it
+    cannot turn this external reference into evidence. A warning saying the
+    reference was not verified travels on every envelope that contains one.
 
     Amounts are ``StrictInt``. A protocol boundary is exactly where lax
     coercion turns ``"3799"`` and ``3799.0`` into money, and binary floats have

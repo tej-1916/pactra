@@ -16,8 +16,8 @@ A ``CandidateAuthorizationRequest``, and nothing else. Not an authorization, not
 a partial authorization, not a token that becomes one later. The document may
 carry an ``external_authorization_reference`` — an id from the sender's own
 system — and PACTRA carries it as an OPAQUE STRING it has not verified and holds
-no verifier to verify. There is no user signing and no signature verification
-anywhere in PACTRA (KL-04). Every envelope containing a reference gets an
+no protocol-specific verifier to verify. USER_ED25519 accepts only PACTRA's own
+server-built approval challenge. Every envelope containing a reference gets an
 ``EXTERNAL_AUTHORIZATION_REFERENCE_NOT_VERIFIED`` warning, because a reference
 carried silently is a reference somebody eventually treats as evidence.
 
@@ -246,7 +246,7 @@ class PactraAuthorizationIntentAdapter(PaymentAuthorizationAdapter):
         }
         # The reference is the single most dangerous value this adapter carries:
         # a sender's assertion that somebody approved the purchase, which PACTRA
-        # holds no verifier for (KL-04, AL-05). Marking it tainted per-field
+        # holds no protocol-specific verifier for (AL-05). Marking it tainted per-field
         # matters more than any other entry here, not less, so it travels with
         # provenance rather than on the envelope-level taint flag alone.
         if candidate.external_authorization_reference is not None:
@@ -269,8 +269,8 @@ class PactraAuthorizationIntentAdapter(PaymentAuthorizationAdapter):
                     code=AdapterWarningCode.EXTERNAL_AUTHORIZATION_REFERENCE_NOT_VERIFIED,
                     detail=(
                         "an external authorization reference was carried through unverified: "
-                        "PACTRA implements no signature verification (KL-04), so the "
-                        "reference is a correlation handle and never evidence of approval"
+                        "PACTRA has no verifier for this external reference, so it is a "
+                        "correlation handle and never evidence of approval"
                     ),
                 )
             )

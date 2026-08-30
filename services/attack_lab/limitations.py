@@ -60,14 +60,15 @@ KNOWN_LIMITATIONS: tuple[KnownLimitation, ...] = (
     ),
     KnownLimitation(
         id="KL-04-no-cryptographic-user-authorization",
-        title="Authorizations are server-issued, not cryptographically signed",
+        title="Signed approval uses one demo key, not production user identity",
         detail=(
-            "There is no user signature and no signature verification anywhere. An "
-            "authorization is authoritative because it is minted, held and consumed "
-            "entirely inside the trusted server boundary. The 256-bit nonce is "
-            "server-held entropy, not a key and not a token issued to a client. The "
-            "Attack Lab therefore proves server-side enforcement, and proves "
-            "nothing about an attacker who already holds the database."
+            "USER_ED25519 provides a LOCAL CRYPTOGRAPHIC APPROVAL PROOF with one "
+            "pre-enrolled DEMO USER-CONTROLLED SIGNING KEY. There is no user/account "
+            "system, authenticated approval HTTP principal, trusted payment-detail "
+            "display, or production credential recovery/rotation UX. Local key theft "
+            "compromises demo approval, and broad server/database compromise remains "
+            "outside the proof. This is not production identity, WebAuthn/passkey "
+            "support, non-repudiation, or independent security validation."
         ),
         demonstrated_by=None,
     ),

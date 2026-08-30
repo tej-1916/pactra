@@ -54,6 +54,7 @@ from enum import Enum
 from typing import Any, cast
 
 from apps.api.db.models import AuditEventRow, Mission
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.capability import payment_executor_capabilities, security_kernel_capabilities
 from packages.schemas.domain import (
     EventType,
@@ -79,7 +80,6 @@ from services.payment_executor.intents import create_payment_intent
 from services.payment_executor.providers.fake import FakePaymentProvider, FaultMode
 from services.security_kernel.authorization import (
     AuthorizationFailure,
-    activate_authorization,
     authorization_for_mission,
     consume_authorization,
     generate_nonce,
@@ -264,6 +264,7 @@ async def _seed_merchant_history(
                     amount_inr=amount,
                     nonce=generate_nonce(),
                 ),
+                approval_scheme=ApprovalScheme.POLICY_AUTO,
             )
             await session.commit()
 
@@ -308,11 +309,11 @@ async def _approved_mission(
     registry: MerchantRegistry,
     mission_constraints: MissionConstraints,
 ) -> uuid.UUID:
-    """Run a real mission and activate its authorization if approval is pending.
+    """Run a real mission and cryptographically approve it if required.
 
     Uses ``Orchestrator`` through the Phase 6 helper, so every kernel stage runs.
-    Activation goes through ``activate_authorization`` rather than a status
-    write, for the same reason Phase 6 does it that way.
+    USER_ED25519 activation uses the evaluation harness's external demo signer;
+    POLICY_AUTO is already activated by the orchestrator.
     """
     async with context.sessionmaker() as session:
         from packages.schemas.domain import CreateMissionRequest
@@ -329,7 +330,7 @@ async def _approved_mission(
     async with context.sessionmaker() as session:
         row = await authorization_for_mission(session, mission_id)
         if row is not None and row.status == "PENDING":
-            await activate_authorization(session, authorization_id=row.authorization_id)
+            await context.approve_pending_user_authorization(session, row)
             activated = await session.get(Mission, mission_id)
             if activated is not None:
                 activated.state = "AUTHORIZED"

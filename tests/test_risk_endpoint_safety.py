@@ -348,7 +348,9 @@ async def test_a_failed_assessment_records_no_event(client, monkeypatch):
     assert after == before
 
 
-async def test_the_deterministic_path_is_unaffected_by_a_broken_risk_engine(client, monkeypatch):
+async def test_the_deterministic_path_is_unaffected_by_a_broken_risk_engine(
+    client, monkeypatch, demo_signer
+):
     """The whole point of advisory: the kernel does not depend on it.
 
     With the risk engine replaced by something that always raises, a mission
@@ -370,7 +372,9 @@ async def test_the_deterministic_path_is_unaffected_by_a_broken_risk_engine(clie
     assert (await client.get(f"/api/v1/missions/{mission_id}/authorization")).status_code == 200
     assert (await client.get(f"/api/v1/missions/{mission_id}/audit/verify")).json()["valid"] is True
 
-    approved = await client.post(f"/api/v1/missions/{mission_id}/authorization/approve")
+    from tests.conftest import approve_with_demo_signer
+
+    approved = await approve_with_demo_signer(client, mission_id, demo_signer)
     assert approved.status_code == 200
     assert approved.json()["status"] == "ACTIVE"
 

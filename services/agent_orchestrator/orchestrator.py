@@ -40,6 +40,7 @@ from apps.api.db.models import (
     PolicyDecisionRow,
 )
 from apps.api.pactra.config import get_settings
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.capability import Capability
 from packages.schemas.domain import (
     CreateMissionRequest,
@@ -404,6 +405,11 @@ class Orchestrator:
             capabilities=capabilities_for(KERNEL_PRINCIPAL),
             mission_id=mission.id,
             transaction=transaction,
+            approval_scheme=(
+                ApprovalScheme.USER_ED25519
+                if decision.decision == PolicyOutcome.REQUIRE_APPROVAL
+                else ApprovalScheme.POLICY_AUTO
+            ),
         )
 
         if decision.decision == PolicyOutcome.REQUIRE_APPROVAL:
@@ -417,23 +423,17 @@ class Orchestrator:
                 payload={
                     "requested_amount": decision.requested_amount,
                     "authorization_id": str(authorization.authorization_id),
+                    "approval_scheme": ApprovalScheme.USER_ED25519.value,
+                    "signing_key_id": get_settings().demo_approver_signing_key_id,
                 },
             )
         else:
             # ALLOW: policy requires no human approval, so the kernel activates
             # the authorization immediately and the mission reaches AUTHORIZED.
             await activate_authorization(session, authorization_id=authorization.authorization_id)
-            await self._transition(
-                session,
-                mission,
-                MissionState.AUTHORIZED,
-                EventType.AUTHORIZATION_ACTIVATED,
-                actor="security-kernel",
-                payload={
-                    "authorization_id": str(authorization.authorization_id),
-                    "requested_amount": decision.requested_amount,
-                },
-            )
+            assert_transition(MissionState(mission.state), MissionState.AUTHORIZED)
+            mission.state = MissionState.AUTHORIZED.value
+            await session.flush()
 
         await session.flush()
         return mission

@@ -173,6 +173,28 @@ class AuthorizationRow(Base):
             "(status = 'CONSUMED') = (consumed_at IS NOT NULL)",
             name="ck_authorizations_consumed_at_matches_status",
         ),
+        CheckConstraint(
+            "approval_scheme IN ('POLICY_AUTO', 'USER_ED25519', 'LEGACY_SERVER')",
+            name="ck_authorizations_approval_scheme_known",
+        ),
+        CheckConstraint(
+            "(signing_key_id IS NULL) = (approval_signature IS NULL)",
+            name="ck_authorizations_proof_pair_complete",
+        ),
+        CheckConstraint(
+            "approval_signature IS NULL OR "
+            "(length(approval_signature) = 128 AND approval_signature = lower(approval_signature))",
+            name="ck_authorizations_signature_shape",
+        ),
+        CheckConstraint(
+            "(approval_scheme = 'POLICY_AUTO' AND signing_key_id IS NULL) OR "
+            "(approval_scheme = 'LEGACY_SERVER' AND signing_key_id IS NULL) OR "
+            "(approval_scheme = 'USER_ED25519' AND ("
+            "(status = 'PENDING' AND signing_key_id IS NULL) OR "
+            "(status IN ('ACTIVE', 'CONSUMED') AND signing_key_id IS NOT NULL) OR "
+            "status IN ('EXPIRED', 'REVOKED'))) ",
+            name="ck_authorizations_scheme_proof_state",
+        ),
     )
 
     authorization_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -186,6 +208,13 @@ class AuthorizationRow(Base):
     binding_version: Mapped[str] = mapped_column(String(40), nullable=False)
     policy_version: Mapped[str] = mapped_column(String(40), nullable=False)
     offer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Activation origin.  New rows are always POLICY_AUTO or USER_ED25519.
+    # LEGACY_SERVER is migration-only and fails closed in payment verification.
+    approval_scheme: Mapped[str] = mapped_column(String(24), nullable=False)
+    signing_key_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Ed25519 signature: exactly 64 bytes represented as 128 lowercase hex.
+    # Never copied to audit payloads or logs.
+    approval_signature: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

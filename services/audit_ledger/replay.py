@@ -428,8 +428,8 @@ def _on_authorization_activated(state: _ReplayState, event: AuditEventRow) -> No
         _opt_str(event, "transaction_digest_prefix") or auth.transaction_digest_prefix
     )
     if state.approval_required:
-        # A human approved it. On the ALLOW path the kernel activates without
-        # any approval step, so this must not be claimed there.
+        # A valid USER_ED25519 proof activated it. On the ALLOW path the kernel
+        # uses POLICY_AUTO without a user approval step.
         state.approval_granted = True
     _advance(state, event, MissionState.AUTHORIZED)
 

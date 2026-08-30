@@ -226,8 +226,9 @@ On approval, the authorization is bound to the exact transaction via a digest:
 
 ```text
 transaction_digest = SHA256(
-  merchant_id + product_id + quantity + amount + currency
-  + policy_version + offer_version + expiry + nonce )
+  "pactra-txn-bind-v1" || 0x1f || canonical_typed_fields(
+    merchant_id, product_id, quantity, amount_inr, currency,
+    policy_version, offer_version, expires_at, nonce))
 ```
 
 If price, merchant, product, quantity, currency, or policy version changes after
@@ -239,7 +240,17 @@ approved ₹3799 → merchant changes to ₹4399 → TRANSACTION_BINDING_FAILURE
 
 ### 6.9 Authorization / Human Approval
 Authorizations are nonce-bound, expiring, one-time-use where appropriate, and
-associated with a transaction digest.
+associated with a transaction digest. Authorization origin is explicit:
+`POLICY_AUTO` is a deterministic `ALLOW`, never human approval;
+`USER_ED25519` requires a LOCAL CRYPTOGRAPHIC APPROVAL PROOF from the
+pre-enrolled DEMO USER-CONTROLLED SIGNING KEY. The fixed approval message is
+`pactra-user-approval-v1 || 0x1f || canonical_typed_fields(authorization_id,
+mission_id, binding_version, transaction_digest, signing_key_id)`. The caller
+cannot choose an algorithm, submit a public key, or supply message bytes.
+
+The private key remains external to PACTRA. This demo proof is not production
+identity, WebAuthn/passkey support, non-repudiation, merchant authentication, or
+independent security validation.
 
 ### 6.10 Replay Protection
 A consumed authorization cannot be reused:

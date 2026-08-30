@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 from apps.api.db.models import Mission
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import security_kernel_capabilities
 from packages.schemas.transaction import BoundTransaction
@@ -90,6 +91,7 @@ async def test_every_requested_adapter_originated_mutation_invalidates_authoriza
         capabilities=security_kernel_capabilities(),
         mission_id=mission_id,
         transaction=original,
+        approval_scheme=ApprovalScheme.POLICY_AUTO,
     )
     await activate_authorization(session, authorization_id=row.authorization_id)
 

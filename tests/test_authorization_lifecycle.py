@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from apps.api.db.models import AuthorizationRow
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.authorization import Authorization, AuthorizationStatus
 from packages.schemas.capability import (
     buyer_agent_capabilities,
@@ -57,6 +58,7 @@ async def _issue(session, mission, **overrides):
         capabilities=KERNEL,
         mission_id=mission.id,
         transaction=txn,
+        approval_scheme=ApprovalScheme.POLICY_AUTO,
         issued_at=NOW,
     )
     return row, txn
@@ -123,6 +125,7 @@ async def test_buyer_agent_cannot_issue_an_authorization(session):
             capabilities=BUYER,
             mission_id=mission.id,
             transaction=txn,
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
             issued_at=NOW,
         )
 
@@ -140,6 +143,7 @@ async def test_already_expired_transaction_cannot_be_issued(session):
             capabilities=KERNEL,
             mission_id=mission.id,
             transaction=stale,
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
             issued_at=NOW,
         )
     assert await _count(session) == 0
@@ -176,6 +180,7 @@ async def test_malformed_nonce_creates_no_authorization(session):
             capabilities=KERNEL,
             mission_id=mission.id,
             transaction=txn,
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
             issued_at=NOW,
         )
     assert await _count(session) == 0
@@ -200,6 +205,9 @@ async def test_nonce_uniqueness_is_enforced_by_the_database(session):
         binding_version=BINDING_VERSION,
         policy_version="policy-v1",
         offer_version="offer-v1",
+        approval_scheme=ApprovalScheme.POLICY_AUTO.value,
+        signing_key_id=None,
+        approval_signature=None,
         status=AuthorizationStatus.PENDING.value,
         issued_at=NOW,
         expires_at=SOON,
@@ -229,6 +237,9 @@ async def test_consumed_status_requires_a_consumption_timestamp(session):
         binding_version=BINDING_VERSION,
         policy_version="policy-v1",
         offer_version="offer-v1",
+        approval_scheme=ApprovalScheme.POLICY_AUTO.value,
+        signing_key_id=None,
+        approval_signature=None,
         status=AuthorizationStatus.CONSUMED.value,
         issued_at=NOW,
         expires_at=SOON,
@@ -256,6 +267,7 @@ async def test_domain_model_mirrors_the_consumed_at_constraint():
             status=AuthorizationStatus.ACTIVE,
             policy_version="policy-v1",
             offer_version="offer-v1",
+            approval_scheme=ApprovalScheme.POLICY_AUTO,
             consumed_at=NOW,  # ACTIVE must not carry a consumption time
         )
 

@@ -48,6 +48,10 @@ from apps.api.db.models import (
     WebhookEventRow,
 )
 from apps.api.db.session import configure_sqlite_transactions
+from apps.api.pactra.config import get_settings
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from packages.schemas.approval import ApprovalScheme, approval_message
 from packages.schemas.capability import security_kernel_capabilities
 from packages.schemas.transaction import BoundTransaction
 from sqlalchemy import func, select, text
@@ -63,6 +67,7 @@ from services.attack_lab.models import Backend
 from services.payment_executor.providers.fake import FakePaymentProvider
 from services.security_kernel.authorization import (
     activate_authorization,
+    approve_authorization_with_signature,
     generate_nonce,
     issue_authorization,
 )
@@ -92,6 +97,59 @@ class ScenarioContext:
     #: Scratch space for a scenario that needs to hand state from setup to
     #: execute without a return value. Never read by the runner.
     scratch: dict[str, Any] = field(default_factory=dict)
+    #: External signer material owned by the authored test harness, never the
+    #: API server or database. repr=False prevents accidental report/log output.
+    _demo_approver_private_key: Ed25519PrivateKey = field(
+        default_factory=Ed25519PrivateKey.generate,
+        repr=False,
+    )
+    demo_approver_signing_key_id: str = "attack-harness-demo-user-ed25519-v1"
+
+    def __post_init__(self) -> None:
+        """Pre-enrol only the harness signer's public key in server config."""
+        public_hex = (
+            self._demo_approver_private_key.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+            .hex()
+        )
+        os.environ["DEMO_APPROVER_SIGNING_KEY_ID"] = self.demo_approver_signing_key_id
+        os.environ["DEMO_APPROVER_PUBLIC_KEY_HEX"] = public_hex
+        get_settings.cache_clear()
+
+    async def approve_pending_user_authorization(
+        self,
+        session: AsyncSession,
+        row: AuthorizationRow,
+    ) -> AuthorizationRow:
+        """Act as the external demo signer for an authored harness scenario."""
+        message = approval_message(
+            authorization_id=row.authorization_id,
+            mission_id=row.mission_id,
+            binding_version=row.binding_version,
+            transaction_digest=row.transaction_digest,
+            signing_key_id=self.demo_approver_signing_key_id,
+        )
+        return await approve_authorization_with_signature(
+            session,
+            mission_id=row.mission_id,
+            authorization_id=row.authorization_id,
+            signing_key_id=self.demo_approver_signing_key_id,
+            signature_hex=self._demo_approver_private_key.sign(message).hex(),
+        )
+
+    def demo_approval_signature(self, row: AuthorizationRow) -> str:
+        """Sign one challenge without exposing key material to a report."""
+        message = approval_message(
+            authorization_id=row.authorization_id,
+            mission_id=row.mission_id,
+            binding_version=row.binding_version,
+            transaction_digest=row.transaction_digest,
+            signing_key_id=self.demo_approver_signing_key_id,
+        )
+        return self._demo_approver_private_key.sign(message).hex()
 
     # ------------------------------------------------------------------ #
     # Row censuses — the evidence behind every "nothing happened" claim
@@ -177,11 +235,25 @@ class ScenarioContext:
             **overrides,
         )
         async with self.sessionmaker() as session:
+            session.add(
+                PolicyDecisionRow(
+                    mission_id=mission_id,
+                    decision="ALLOW",
+                    policy_version=transaction.policy_version,
+                    reason_codes=["WITHIN_LIMITS"],
+                    requested_amount=transaction.amount_inr,
+                    soft_budget=transaction.amount_inr,
+                    hard_limit=transaction.amount_inr,
+                    selected_offer_id=None,
+                )
+            )
+            await session.flush()
             row = await issue_authorization(
                 session,
                 capabilities=security_kernel_capabilities(),
                 mission_id=mission_id,
                 transaction=transaction,
+                approval_scheme=ApprovalScheme.POLICY_AUTO,
             )
             authorization_id = row.authorization_id
             if activate:
@@ -207,11 +279,25 @@ class ScenarioContext:
         mission_id = await self.make_mission("POLICY_CHECKED")
         transaction = self.bound_transaction(expires_at=expires_at)
         async with self.sessionmaker() as session:
+            session.add(
+                PolicyDecisionRow(
+                    mission_id=mission_id,
+                    decision="ALLOW",
+                    policy_version=transaction.policy_version,
+                    reason_codes=["WITHIN_LIMITS"],
+                    requested_amount=transaction.amount_inr,
+                    soft_budget=transaction.amount_inr,
+                    hard_limit=transaction.amount_inr,
+                    selected_offer_id=None,
+                )
+            )
+            await session.flush()
             row = await issue_authorization(
                 session,
                 capabilities=security_kernel_capabilities(),
                 mission_id=mission_id,
                 transaction=transaction,
+                approval_scheme=ApprovalScheme.POLICY_AUTO,
                 issued_at=issued_at,
             )
             authorization_id = row.authorization_id

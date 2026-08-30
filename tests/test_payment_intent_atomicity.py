@@ -14,6 +14,7 @@ import uuid
 
 import pytest
 from apps.api.db.models import PaymentIntentRow
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import payment_executor_capabilities
 from packages.schemas.domain import EventType, MissionState, utcnow
@@ -133,6 +134,7 @@ async def test_pending_authorization_cannot_create_a_payment_intent(session):
         capabilities=security_kernel_capabilities(),
         mission_id=mission.id,
         transaction=txn,
+        approval_scheme=ApprovalScheme.POLICY_AUTO,
     )
     mission.state = MissionState.AUTHORIZED.value
     await session.flush()
@@ -357,6 +359,7 @@ async def test_an_unauthorized_mission_cannot_start_a_payment(session):
         capabilities=security_kernel_capabilities(),
         mission_id=mission.id,
         transaction=txn,
+        approval_scheme=ApprovalScheme.POLICY_AUTO,
     )
     await activate_authorization(session, authorization_id=row.authorization_id)
     # Mission deliberately left in POLICY_CHECKED.

@@ -26,7 +26,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from apps.api.db.models import Mission, OutboxEventRow, PaymentIntentRow
+from apps.api.db.models import AuthorizationRow, Mission, OutboxEventRow, PaymentIntentRow
+from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.capability import Capability, CapabilitySet
 from packages.schemas.domain import EventType, MissionState, ReasonCode, as_utc, utcnow
 from packages.schemas.payment import (
@@ -58,6 +59,11 @@ from services.payment_executor.state_machine import (
     IllegalPaymentTransition,
     assert_payment_transition,
     is_terminal,
+)
+from services.security_kernel.authorization import (
+    AuthorizationNotFound,
+    TransactionBindingFailure,
+    verify_authorization_for_payment,
 )
 from services.security_kernel.capability_registry import enforce_registered
 
@@ -385,6 +391,44 @@ async def dispatch_create(
 
     if current != PaymentIntentState.QUEUED:
         raise IllegalPaymentTransition(current, PaymentIntentState.PROCESSING)
+
+    # FINAL SECURITY GATE.  Reload the durable authorization and re-verify its
+    # stored proof immediately before any provider lookup/create call.  Compare
+    # every transaction field copied onto the intent so post-queue corruption
+    # fails closed before provider I/O.
+    authorization = await session.get(
+        AuthorizationRow,
+        intent.authorization_id,
+        populate_existing=True,
+    )
+    if authorization is None:  # pragma: no cover - FK normally prevents this
+        raise AuthorizationNotFound(intent.authorization_id, "authorization no longer exists")
+    transaction = await verify_authorization_for_payment(
+        session,
+        row=authorization,
+        expected_status=AuthorizationStatus.CONSUMED,
+        now=moment,
+    )
+    mismatches: list[str] = []
+    if authorization.mission_id != intent.mission_id:
+        mismatches.append("mission_id")
+    if authorization.authorization_id != intent.authorization_id:
+        mismatches.append("authorization_id")
+    if authorization.transaction_digest != intent.transaction_digest:
+        mismatches.append("transaction_digest")
+    if transaction.merchant_id != intent.merchant_id:
+        mismatches.append("merchant_id")
+    if transaction.amount_inr != intent.amount_inr:
+        mismatches.append("amount_inr")
+    if transaction.currency != intent.currency:
+        mismatches.append("currency")
+    if event.payment_intent_id != intent.id:
+        mismatches.append("outbox.payment_intent_id")
+    if mismatches:
+        raise TransactionBindingFailure(
+            authorization.authorization_id,
+            "durable payment intent disagrees with authorization: " + ", ".join(mismatches),
+        )
 
     await apply_payment_transition(
         session,

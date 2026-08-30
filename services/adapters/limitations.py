@@ -12,10 +12,11 @@ Three different kinds of claim, three lists. Folding them together would make a
 protocol scoping note read like a security defect, and would change what every
 Phase 6 attack-lab report prints.
 
-**KL-01..KL-07 and RL-01..RL-09 are unchanged and unfixed by Phase 8.** Phase 8
-adds no cryptographic signing, no external audit anchor, no merchant
-authentication, and changes nothing about reconciliation, Razorpay's provider-
-side uniqueness, or the risk engine's real-world generalization.
+Phase 8 itself added no cryptographic verification, external audit anchor, or
+merchant authentication, and changed nothing about reconciliation, Razorpay's
+provider-side uniqueness, or the risk engine's real-world generalization. The
+later LOCAL CRYPTOGRAPHIC APPROVAL PROOF does not cause adapter-supplied
+authorization references to become trusted.
 
 These are NOT findings. Every one is a consequence of a decision made on
 purpose, written down so nobody has to discover it from an integration attempt.
@@ -86,9 +87,10 @@ ADAPTER_LIMITATIONS: tuple[KnownLimitation, ...] = (
         title="An external authorization reference is carried, never verified",
         detail=(
             "CandidateAuthorizationRequest.external_authorization_reference is an opaque "
-            "string. PACTRA does not verify it and holds no verifier that could: there is "
-            "no user signing and no signature verification anywhere in the system "
-            "(KL-04, unchanged). Every envelope carrying one gets an "
+            "string. PACTRA does not verify it and holds no protocol-specific verifier "
+            "for it. The later USER_ED25519 verifier accepts only PACTRA's own "
+            "server-built challenge and pre-enrolled demo key; it cannot validate an "
+            "external reference. Every envelope carrying one gets an "
             "EXTERNAL_AUTHORIZATION_REFERENCE_NOT_VERIFIED warning. Until a designed "
             "verifier exists, an external authorization representation can only ever "
             "become a candidate that the kernel adjudicates from scratch."

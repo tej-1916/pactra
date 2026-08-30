@@ -68,7 +68,6 @@ from services.payment_executor.intents import create_payment_intent
 from services.payment_executor.providers.fake import FaultMode, webhook_body
 from services.policy_engine.normalization import normalize_offer
 from services.security_kernel.authorization import (
-    activate_authorization,
     authorization_for_mission,
     consume_authorization,
 )
@@ -183,12 +182,13 @@ async def _approval_execute(context: Any, state: dict[str, Any]) -> Observation:
     awaiting = before["state"] == MissionState.AWAITING_APPROVAL.value
     pending = (before["authorization"] or {}).get("status") == AuthorizationStatus.PENDING.value
 
-    # The human approves — the real activation path, an atomic conditional UPDATE.
+    # The harness's external demo signer approves through the real signature
+    # verification and atomic activation path.
     approved = False
     async with context.sessionmaker() as session:
         row = await authorization_for_mission(session, mission_id)
         if row is not None:
-            await activate_authorization(session, authorization_id=row.authorization_id)
+            await context.approve_pending_user_authorization(session, row)
             mission = await session.get(
                 __import__("apps.api.db.models", fromlist=["Mission"]).Mission, mission_id
             )

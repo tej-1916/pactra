@@ -126,15 +126,13 @@ async def test_assessment_never_consumes_an_authorization(session):
     A stronger check than "status unchanged": it proves the one-time use was not
     quietly spent, by spending it successfully after the assessment.
     """
-    mission_id = await _mission(session)
+    mission_id = await _mission(session, soft_budget_inr=4500, hard_limit_inr=5000)
     row = (
         await session.execute(
             select(AuthorizationRow).where(AuthorizationRow.mission_id == mission_id)
         )
     ).scalar_one()
-    from services.security_kernel.authorization import activate_authorization
-
-    await activate_authorization(session, authorization_id=row.authorization_id)
+    assert row.status == AuthorizationStatus.ACTIVE.value
     await session.commit()
 
     for _ in range(3):

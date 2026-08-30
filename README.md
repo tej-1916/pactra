@@ -246,12 +246,13 @@ PENDING  --activate-->  ACTIVE  --consume-->  CONSUMED   (terminal)
    +-----------------------+--revoke--> REVOKED          (terminal)
 ```
 
-**Server-issued, not cryptographically signed.** Phase 3 implements no signing
-and no signature verification, so nothing here is described as signed. The
-artifact is authoritative because it is minted, held, and consumed entirely
-inside the trusted server boundary. The 256-bit `nonce` is server-held entropy
-that makes the artifact unique and its digest unpredictable — it is never
-returned by the API and never written into an audit payload.
+The base artifact is server-issued. Phase 3 originally activated it without a
+user signature; the signed-authorization upgrade below now makes activation
+origin explicit. `POLICY_AUTO` means a deterministic `ALLOW` and is not human
+approval. `USER_ED25519` requires a LOCAL CRYPTOGRAPHIC APPROVAL PROOF. The
+256-bit `nonce` remains server-held entropy that makes the artifact unique and
+its digest unpredictable — it is never returned by the API or written into an
+audit payload.
 
 Issuance requires the `authorization.issue` capability, held only by the
 `security-kernel` principal and explicitly denied to `buyer-agent`. A `DENY`
@@ -279,7 +280,8 @@ consumption timestamp exists if and only if the row is `CONSUMED`.
 
 ```text
 GET  /api/v1/missions/{id}/authorization          # artifact, never the nonce
-POST /api/v1/missions/{id}/authorization/approve  # PENDING -> ACTIVE
+GET  /api/v1/missions/{id}/authorization/challenge # canonical USER_ED25519 challenge
+POST /api/v1/missions/{id}/authorization/approve  # signature proof; PENDING -> ACTIVE
 ```
 
 Approval grants no payment capability — there is no executor yet. It moves the
@@ -310,17 +312,78 @@ MISSION=$(curl -s -X POST http://127.0.0.1:8000/api/v1/missions \
 # 2. Inspect the PENDING authorization (note: no nonce is returned)
 curl -s http://127.0.0.1:8000/api/v1/missions/$MISSION/authorization
 
-# 3. Approve it -> ACTIVE, mission reaches AUTHORIZED
-curl -s -X POST http://127.0.0.1:8000/api/v1/missions/$MISSION/authorization/approve
+# 3. Use the external signer described below to inspect, sign, and submit.
+python scripts/pactra_demo_signer.py sign \
+  --private-key-path /path/outside/pactra/demo-approver.pem \
+  --signing-key-id demo-user-ed25519-v1 \
+  --mission-id "$MISSION" --submit
 ```
 
 ### Not implemented in Phase 3
 
 No payment execution, no Razorpay, no transactional outbox, no frontend, no risk
-model, no Attack Lab. No cryptographic signing of any kind — neither user
-authorization signatures nor merchant authentication (mutual TLS / signed
-merchant assertions remain unimplemented, despite Phase 2 having anticipated
-them here).
+model, no Attack Lab were part of Phase 3 itself. Cryptographic merchant
+authentication remains unimplemented.
+
+### Signed-authorization hardening — LOCAL CRYPTOGRAPHIC APPROVAL PROOF
+
+`REQUIRE_APPROVAL` now uses a fixed Ed25519 protocol. PACTRA reconstructs the
+only signable byte sequence; it accepts neither arbitrary message bytes, a
+caller-selected algorithm, nor a request-supplied public key:
+
+```text
+domain = "pactra-user-approval-v1"
+message = domain || 0x1f || canonical_json({
+  authorization_id, mission_id, binding_version,
+  transaction_digest, signing_key_id
+})
+signature = 64 bytes encoded as exactly 128 lowercase hexadecimal characters
+```
+
+The existing `pactra-txn-bind-v1` digest is unchanged and remains the sole
+canonical commitment to merchant, product, quantity, amount, currency, policy
+version, offer version, expiry, and nonce. There is no second transaction
+serialization. Verification happens before `PENDING -> ACTIVE`, again before
+authorization consumption/intent/outbox creation, and again immediately before
+any provider lookup or create call. The last check also compares the durable
+payment intent with the authorization's mission, ID, digest, merchant, amount,
+currency, and outbox linkage.
+
+PACTRA is configured with one pre-enrolled demo key ID and public key:
+
+```bash
+# The private key path must be outside this repository; the file is created 0600.
+python scripts/pactra_demo_signer.py generate \
+  --private-key-path /path/outside/pactra/demo-approver.pem \
+  --signing-key-id demo-user-ed25519-v1
+
+# Copy only the printed public value into server configuration.
+export DEMO_APPROVER_SIGNING_KEY_ID=demo-user-ed25519-v1
+export DEMO_APPROVER_PUBLIC_KEY_HEX=<64-lowercase-hex-public-key>
+```
+
+The utility fetches the pending challenge, reconstructs and checks its canonical
+bytes, displays merchant/product/quantity/amount/currency/expiry, then signs
+locally. It never sends or prints the private key. Because the nonce remains
+server-held, the signer approves the server-generated digest and cannot
+independently reconstruct that digest from the displayed transaction.
+
+This is a DEMO USER-CONTROLLED SIGNING KEY, not production identity, WebAuthn,
+passkey support, non-repudiation, merchant authentication, or independent
+security validation. Remaining limitations are: a single demo approver trust
+configuration; no user/account system; no authenticated approval HTTP
+principal; local key theft compromises demo approval; no production credential
+recovery/rotation UX; no trusted payment-detail display; broad server/provider
+compromise remains outside this proof; cryptographic merchant authentication is
+absent; and external audit anchoring is absent.
+
+Invalid cryptographic proof submissions that reach the approval handler append
+a safe `SECURITY_VIOLATION` and are explicitly committed before the HTTP error,
+so those events are durable. Schema-level malformed bodies are rejected by
+FastAPI before the handler and therefore do not receive a mission audit event.
+Each successful activation has one authoritative audit source: the security
+kernel. Audit payloads contain scheme, key ID, authorization ID, and transaction
+digest, never the signature or private-key material.
 
 ---
 
@@ -553,8 +616,9 @@ python -m services.payment_executor.run_worker --provider fake
 No Attack Lab or evaluation harness (delivered in Phase 6, below), no risk
 engine (delivered in Phase 7, below), no protocol adapters (Phase 8), no
 frontend (Phase 9). No cryptographic signing of
-user authorizations and no cryptographic merchant authentication — both remain
-unimplemented, as in Phase 3. No transport-scoped security log for rejected
+user authorizations was implemented by Phase 4; the later signed-authorization
+hardening adds the scoped demo proof above. Cryptographic merchant
+authentication remains unimplemented. No transport-scoped security log for rejected
 webhooks.
 
 ---
@@ -785,8 +849,9 @@ GET /api/v1/missions/{id}/replay          # read-only; gated on verification
 No external anchor for the audit chain, so tail truncation and whole-chain
 deletion remain undetectable (above). No Attack Lab or evaluation harness
 (delivered in Phase 6, below), no risk engine (delivered in Phase 7, below), no
-protocol adapters (Phase 8), no frontend (Phase 9). No cryptographic signing and no cryptographic
-merchant authentication, as in Phases 3 and 4.
+protocol adapters (Phase 8), no frontend (Phase 9). Signing was not part of
+Phase 5; the later demo approval proof does not add cryptographic merchant
+authentication.
 
 ---
 
@@ -1045,7 +1110,7 @@ structures with separate report sections.
 | KL-01 | Tail truncation and whole-chain deletion are undetectable without an external anchor. **Demonstrated** by `audit_tail_truncation`, and never counted as a blocked attack. |
 | KL-02 | A terminal provider failure's reason code is not in the ledger, so replay cannot reconstruct it. |
 | KL-03 | Audit canonicalization is weaker than the transaction-digest encoder; historical hashes are preserved rather than rewritten. |
-| KL-04 | Authorizations are server-issued, not cryptographically signed. |
+| KL-04 | USER_ED25519 uses one demo key, not production user identity or a user/account credential system. |
 | KL-05 | Merchant identity is registration-based, not cryptographic. |
 | KL-06 | Reconciliation trusts a provider that positively reports holding no payment. A provider that lies can induce a duplicate — measured directly, and it is the mutation test that proves the scenario can detect one. |
 | KL-07 | Reported latency is harness-local, not deployed enforcement latency. |
@@ -1057,8 +1122,9 @@ endpoint that creates authorizations and payments, so none was added. No new
 table and no migration: nothing in the kernel reads an evaluation report, and a
 migration whose only purpose is to look thorough is decoration. Reports are
 filesystem JSON under a gitignored `reports/attack-lab/`. No protocol adapters
-(Phase 8), no frontend (Phase 9). No cryptographic signing and no cryptographic
-merchant authentication, as in Phases 3, 4 and 5. (The advisory risk engine
+(Phase 8), no frontend (Phase 9). Signing was not part of Phase 6; the later
+LOCAL CRYPTOGRAPHIC APPROVAL PROOF is a separate authored mechanism-coverage
+expansion and adds no cryptographic merchant authentication. (The advisory risk engine
 arrived in Phase 7, below; it changed nothing in this phase — the Attack Lab's
 scenarios, metrics and block-rate semantics are untouched by it.)
 
@@ -1408,10 +1474,9 @@ a number means less than it looks like.
 | RL-08 | The corpus is trivially separable (margin +0.1500, synthetic AUC 1.0); a benchmark with no hard cases cannot rank a good scorer against an adequate one. |
 | RL-09 | Five of seven benign families produce an identical zero-factor result, so the benign half exercises three distinct outcomes, not seven. |
 
-**KL-01 through KL-07 are unchanged and unfixed by Phase 7.** No cryptographic
-signing, no external audit anchor, no merchant authentication, and nothing about
-reconciliation changed. Latency above is harness-local for exactly the reasons
-KL-07 gives.
+Phase 7 itself changed none of KL-01 through KL-07. The later signed-approval
+hardening narrows KL-04 to the explicitly limited demo-key trust model; external
+audit anchoring, merchant authentication, and reconciliation are unchanged.
 
 ### ML — not added
 
@@ -1429,8 +1494,8 @@ less interpretability.
 No user identity and therefore no user-scoped behavioural features. No reviewer
 workflow or escalation routing. No automatic invocation from the mission path.
 No `risk_scores` table and no migration — nothing in the kernel reads a risk row.
-No ML. No protocol adapters (Phase 8), no frontend (Phase 9). No cryptographic
-signing and no cryptographic merchant authentication, as in Phases 3–6.
+No ML. No protocol adapters (Phase 8), no frontend (Phase 9). Signing was not
+part of Phase 7; the later demo proof does not add merchant authentication.
 
 ---
 
@@ -1542,7 +1607,7 @@ and unconsumed while returning `TRANSACTION_BINDING_FAILURE`.
 ### Phase 8 limitations
 
 No protocol ingress endpoint, authenticated protocol transport, external
-authorization verifier, full MCP server, ACP/AP2/x402 adapter, new payment rail,
+protocol-authorization verifier, full MCP server, ACP/AP2/x402 adapter, new payment rail,
 database migration or dependency was added. Razorpay remains partial/test-mode,
-with no claim of cryptographic user signing, cryptographic merchant
-authentication, provider receipt uniqueness or production completeness.
+with no claim that the adapter authenticates external approval, merchants,
+provider receipt uniqueness, or production completeness.

@@ -50,7 +50,7 @@ from services.security_kernel.authorization import (
     revoke_authorization,
 )
 from sqlalchemy import select
-from tests.conftest import authorized_mission, make_constraints
+from tests.conftest import approve_with_demo_signer, authorized_mission, make_constraints
 
 pytestmark = pytest.mark.asyncio
 
@@ -131,12 +131,12 @@ async def test_replay_reconstructs_a_denied_mission(session):
     )
 
 
-async def test_replay_reconstructs_human_approval(client):
-    """Approval through the real HTTP route, then replayed through the real route.
+async def test_replay_reconstructs_user_cryptographic_approval(client, demo_signer):
+    """Signed approval through the real HTTP route, then real replay route.
 
     `approval_granted` must become true only here — on the ALLOW path the same
-    AUTHORIZATION_ACTIVATED event is written by the kernel with no human
-    involved, and the projection distinguishes them.
+    AUTHORIZATION_ACTIVATED event is POLICY_AUTO on ALLOW; replay distinguishes
+    that from a required USER_ED25519 proof.
     """
     created = await client.post(
         "/api/v1/missions",
@@ -153,7 +153,7 @@ async def test_replay_reconstructs_human_approval(client):
         },
     )
     mission_id = created.json()["id"]
-    approved = await client.post(f"/api/v1/missions/{mission_id}/authorization/approve")
+    approved = await approve_with_demo_signer(client, mission_id, demo_signer)
     assert approved.status_code == 200, approved.text
 
     replay = await client.get(f"/api/v1/missions/{mission_id}/replay")

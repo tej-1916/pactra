@@ -12,26 +12,33 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from packages.schemas.approval import ApprovalScheme, approval_message
 from packages.schemas.audit import AuditVerificationResult, MissionReplayResult
-from packages.schemas.domain import CreateMissionRequest, EventType, MissionState
+from packages.schemas.authorization import AuthorizationStatus
+from packages.schemas.domain import CreateMissionRequest, MissionState, as_utc, utcnow
 from services.agent_orchestrator.orchestrator import Orchestrator
 from services.agent_orchestrator.state_machine import assert_transition
-from services.audit_ledger.ledger import append_event, list_events
+from services.audit_ledger.ledger import list_events
 from services.audit_ledger.replay import replay_mission
 from services.audit_ledger.verify import verify_mission_chain
 from services.security_kernel.authorization import (
     AuthorizationFailure,
-    activate_authorization,
+    approve_authorization_with_signature,
     authorization_for_mission,
+    rebuild_bound_transaction,
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.db.models import AuthorizationRow, Mission, Offer, PolicyDecisionRow
 from apps.api.db.session import get_session
+from apps.api.pactra.config import get_settings
 from apps.api.pactra.schemas_api import (
+    ApprovalChallengeOut,
+    ApprovalRequest,
     AuditEventOut,
     AuthorizationOut,
+    BoundTransactionSummary,
     MissionOut,
     OfferOut,
     PolicyDecisionOut,
@@ -72,6 +79,8 @@ def _authorization_out(row: AuthorizationRow) -> AuthorizationOut:
         binding_version=row.binding_version,
         policy_version=row.policy_version,
         offer_version=row.offer_version,
+        approval_scheme=row.approval_scheme,
+        signing_key_id=row.signing_key_id,
         issued_at=row.issued_at,
         expires_at=row.expires_at,
         consumed_at=row.consumed_at,
@@ -237,18 +246,11 @@ async def get_authorization(
 
 @router.post("/missions/{mission_id}/authorization/approve", response_model=AuthorizationOut)
 async def approve_authorization(
-    mission_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+    mission_id: uuid.UUID,
+    request: ApprovalRequest,
+    session: AsyncSession = Depends(get_session),
 ) -> AuthorizationOut:
-    """Human approval: activate a PENDING authorization (PENDING -> ACTIVE).
-
-    This grants no payment capability — Phase 3 has no executor. It moves the
-    artifact into the only state from which it can later be consumed exactly
-    once, against exactly the transaction it is bound to.
-
-    Activation is the atomic conditional UPDATE in the security kernel, so a
-    second approval of the same authorization cannot succeed, and an expired
-    authorization cannot be activated at all.
-    """
+    """Verify a LOCAL CRYPTOGRAPHIC APPROVAL PROOF and atomically activate."""
     mission = await _load_mission(session, mission_id)
     row = await authorization_for_mission(session, mission_id)
     if row is None:
@@ -264,8 +266,20 @@ async def approve_authorization(
         )
 
     try:
-        activated = await activate_authorization(session, authorization_id=row.authorization_id)
+        activated = await approve_authorization_with_signature(
+            session,
+            mission_id=mission_id,
+            authorization_id=row.authorization_id,
+            signing_key_id=request.signing_key_id,
+            signature_hex=request.signature,
+        )
     except AuthorizationFailure as failure:
+        # Security rejection events appended by the kernel must survive the
+        # HTTP exception.  This request transaction has performed no privileged
+        # mutation; committing here durably records only safe failure audit (and
+        # an expiry demotion, where applicable).  The dependency's subsequent
+        # rollback is therefore a no-op.
+        await session.commit()
         raise HTTPException(
             status_code=409,
             detail={"reason_code": failure.reason_code, "detail": failure.detail},
@@ -274,14 +288,60 @@ async def approve_authorization(
     assert_transition(MissionState(mission.state), MissionState.AUTHORIZED)
     mission.state = MissionState.AUTHORIZED.value
     await session.flush()
-    await append_event(
-        session,
-        mission_id=mission.id,
-        event_type=EventType.AUTHORIZATION_ACTIVATED,
-        actor="human-approver",
-        payload={
-            "authorization_id": str(activated.authorization_id),
-            "status": activated.status,
-        },
-    )
     return _authorization_out(activated)
+
+
+@router.get(
+    "/missions/{mission_id}/authorization/challenge",
+    response_model=ApprovalChallengeOut,
+)
+async def get_approval_challenge(
+    mission_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> ApprovalChallengeOut:
+    """Return canonical bytes and a readable summary for the external signer."""
+    mission = await _load_mission(session, mission_id)
+    row = await authorization_for_mission(session, mission_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no authorization for this mission")
+    if (
+        mission.state != MissionState.AWAITING_APPROVAL.value
+        or row.status != AuthorizationStatus.PENDING.value
+        or row.approval_scheme != ApprovalScheme.USER_ED25519.value
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": "AUTHORIZATION_NOT_PENDING_USER_APPROVAL"},
+        )
+    if utcnow() >= as_utc(row.expires_at):
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": "AUTHORIZATION_EXPIRED"},
+        )
+
+    transaction = rebuild_bound_transaction(row)
+    signing_key_id = get_settings().demo_approver_signing_key_id
+    message = approval_message(
+        authorization_id=row.authorization_id,
+        mission_id=row.mission_id,
+        binding_version=row.binding_version,
+        transaction_digest=row.transaction_digest,
+        signing_key_id=signing_key_id,
+    )
+    return ApprovalChallengeOut(
+        authorization_id=row.authorization_id,
+        mission_id=row.mission_id,
+        binding_version=row.binding_version,
+        transaction_digest=row.transaction_digest,
+        signing_key_id=signing_key_id,
+        approval_scheme=ApprovalScheme.USER_ED25519.value,
+        approval_message_hex=message.hex(),
+        transaction=BoundTransactionSummary(
+            merchant=transaction.merchant_id,
+            product=transaction.product_id,
+            quantity=transaction.quantity,
+            amount=transaction.amount_inr,
+            currency=transaction.currency,
+            expiry=transaction.expires_at,
+        ),
+    )

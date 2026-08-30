@@ -7,6 +7,7 @@ and must never appear in an API response.
 import pytest
 from packages.schemas.authorization import AuthorizationStatus
 from packages.schemas.domain import EventType, MissionState
+from tests.conftest import approve_with_demo_signer
 
 pytestmark = pytest.mark.asyncio
 
@@ -104,10 +105,10 @@ async def test_mission_and_offer_responses_never_disclose_the_nonce(client, sess
         assert nonce not in r.text
 
 
-async def test_approval_activates_the_authorization_and_authorizes_the_mission(client):
+async def test_approval_activates_the_authorization_and_authorizes_the_mission(client, demo_signer):
     mission = await _create(client)
 
-    r = await client.post(f"/api/v1/missions/{mission['id']}/authorization/approve")
+    r = await approve_with_demo_signer(client, mission["id"], demo_signer)
     assert r.status_code == 200, r.text
     assert r.json()["status"] == AuthorizationStatus.ACTIVE.value
 
@@ -122,12 +123,23 @@ async def test_approval_activates_the_authorization_and_authorizes_the_mission(c
     assert [e["sequence"] for e in ev.json()] == list(range(len(ev.json())))
 
 
-async def test_double_approval_is_refused(client):
+async def test_double_approval_is_refused(client, demo_signer):
     mission = await _create(client)
-    first = await client.post(f"/api/v1/missions/{mission['id']}/authorization/approve")
+    challenge = (
+        await client.get(f"/api/v1/missions/{mission['id']}/authorization/challenge")
+    ).json()
+    payload = {
+        "signing_key_id": demo_signer.signing_key_id,
+        "signature": demo_signer.sign_hex(bytes.fromhex(challenge["approval_message_hex"])),
+    }
+    first = await client.post(
+        f"/api/v1/missions/{mission['id']}/authorization/approve", json=payload
+    )
     assert first.status_code == 200
 
-    second = await client.post(f"/api/v1/missions/{mission['id']}/authorization/approve")
+    second = await client.post(
+        f"/api/v1/missions/{mission['id']}/authorization/approve", json=payload
+    )
     assert second.status_code == 409
     assert second.json()["detail"]["reason_code"] == "MISSION_NOT_AWAITING_APPROVAL"
 
@@ -147,7 +159,10 @@ async def test_allow_path_yields_an_active_authorization(client):
 
 async def test_approving_an_already_authorized_mission_is_refused(client):
     mission = await _create(client, soft_budget_inr=5000, hard_limit_inr=6000)
-    r = await client.post(f"/api/v1/missions/{mission['id']}/authorization/approve")
+    r = await client.post(
+        f"/api/v1/missions/{mission['id']}/authorization/approve",
+        json={"signing_key_id": "not-enrolled", "signature": "00" * 64},
+    )
     assert r.status_code == 409
 
 
@@ -176,7 +191,10 @@ async def test_hard_limit_breach_produces_no_authorization(client):
 
 async def test_cannot_approve_a_denied_mission(client):
     mission = await _create(client, min_rating=5.0)
-    r = await client.post(f"/api/v1/missions/{mission['id']}/authorization/approve")
+    r = await client.post(
+        f"/api/v1/missions/{mission['id']}/authorization/approve",
+        json={"signing_key_id": "not-enrolled", "signature": "00" * 64},
+    )
     assert r.status_code == 404
 
 

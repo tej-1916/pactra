@@ -47,10 +47,7 @@ from services.agent_orchestrator.merchants.mock_merchants import MockMerchantA
 from services.agent_orchestrator.orchestrator import Orchestrator
 from services.payment_executor.intents import create_payment_intent
 from services.payment_executor.providers.fake import FakePaymentProvider
-from services.security_kernel.authorization import (
-    activate_authorization,
-    authorization_for_mission,
-)
+from services.security_kernel.authorization import authorization_for_mission
 from sqlalchemy import func, select
 
 pytestmark = pytest.mark.asyncio
@@ -301,17 +298,15 @@ async def test_translation_creates_no_row_and_calls_no_provider(session):
             quantity=1,
             constraints=MissionConstraints(
                 category="wireless_earbuds",
-                soft_budget_inr=4000,
-                hard_limit_inr=4500,
+                soft_budget_inr=4500,
+                hard_limit_inr=5000,
                 min_rating=4.2,
             ),
         ),
     )
     authorization = await authorization_for_mission(session, mission.id)
     assert authorization is not None
-    await activate_authorization(session, authorization_id=authorization.authorization_id)
-    mission.state = "AUTHORIZED"
-    await session.flush()
+    assert authorization.status == "ACTIVE"
     await create_payment_intent(
         session,
         capabilities=payment_executor_capabilities(),
@@ -362,16 +357,15 @@ async def test_translation_does_not_consume_an_authorization(session):
             quantity=1,
             constraints=MissionConstraints(
                 category="wireless_earbuds",
-                soft_budget_inr=4000,
-                hard_limit_inr=4500,
+                soft_budget_inr=4500,
+                hard_limit_inr=5000,
                 min_rating=4.2,
             ),
         ),
     )
     authorization = await authorization_for_mission(session, mission.id)
     assert authorization is not None
-    await activate_authorization(session, authorization_id=authorization.authorization_id)
-    await session.flush()
+    assert authorization.status == "ACTIVE"
 
     for adapter_id, family, version, payload in FIXTURES:
         translate(

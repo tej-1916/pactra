@@ -1,16 +1,9 @@
-"""Authorization artifact — the explicit domain object Phase 3 introduces.
+"""Authorization artifact and lifecycle.
 
-HONEST SCOPING: this is a **server-issued authorization artifact**, not a
-cryptographically signed one. Nothing in Phase 3 signs anything and nothing
-verifies a signature. The artifact is authoritative because it is minted, held,
-and consumed entirely inside the trusted server boundary — never because it
-carries a verifiable user signature. The 256-bit ``nonce`` is server-held
-entropy that makes each authorization unique and its digest unpredictable; it
-is not a key, not a token issued to a client, and is never disclosed.
-
-If and when real user signing is implemented, this artifact gains a signature
-field and a verification step, and the docs change to match. Until then the
-name does not claim a guarantee the code cannot deliver.
+An artifact is either a deterministic ``POLICY_AUTO`` authorization or a
+``USER_ED25519`` LOCAL CRYPTOGRAPHIC APPROVAL PROOF made with the pre-enrolled
+DEMO USER-CONTROLLED SIGNING KEY.  This is not production identity and is not
+described as non-repudiation.
 
 Status model
 ------------
@@ -31,6 +24,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from packages.schemas.approval import SIGNATURE_HEX_LENGTH, ApprovalScheme
 from packages.schemas.invariants import require
 from packages.schemas.transaction import BINDING_VERSION
 
@@ -80,6 +74,14 @@ class Authorization(BaseModel):
     policy_version: str = Field(min_length=1, max_length=40)
     offer_version: str = Field(min_length=1, max_length=64)
     binding_version: str = Field(default=BINDING_VERSION, min_length=1, max_length=40)
+    approval_scheme: ApprovalScheme
+    signing_key_id: str | None = Field(default=None, min_length=1, max_length=120)
+    approval_signature: str | None = Field(
+        default=None,
+        min_length=SIGNATURE_HEX_LENGTH,
+        max_length=SIGNATURE_HEX_LENGTH,
+        pattern=r"^[0-9a-f]+$",
+    )
     consumed_at: datetime | None = None
 
     @model_validator(mode="after")
@@ -91,6 +93,34 @@ class Authorization(BaseModel):
             "authorization.consumed_at_matches_status",
             f"status={self.status.value} but consumed_at={self.consumed_at!r}",
         )
+        has_key = self.signing_key_id is not None
+        has_signature = self.approval_signature is not None
+        require(
+            has_key == has_signature,
+            "authorization.proof_metadata_is_complete",
+            "signing_key_id and approval_signature must be present or absent together",
+        )
+        if self.approval_scheme in {
+            ApprovalScheme.POLICY_AUTO,
+            ApprovalScheme.LEGACY_SERVER,
+        }:
+            require(
+                not has_key,
+                "authorization.unsigned_scheme_has_no_proof",
+                f"{self.approval_scheme.value} cannot carry an Ed25519 proof",
+            )
+        elif self.status == AuthorizationStatus.PENDING:
+            require(
+                not has_key,
+                "authorization.pending_user_approval_has_no_proof",
+                "a pending USER_ED25519 authorization cannot already carry a proof",
+            )
+        elif self.status in {AuthorizationStatus.ACTIVE, AuthorizationStatus.CONSUMED}:
+            require(
+                has_key,
+                "authorization.active_user_approval_has_proof",
+                f"{self.status.value} USER_ED25519 authorization is missing its proof",
+            )
         return self
 
     @property

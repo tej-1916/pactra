@@ -22,6 +22,7 @@ from services.attack_lab.scenarios import (
     controls,
     input_trust,
     payment_reliability,
+    signed_approval,
     transaction,
     webhook,
 )
@@ -32,6 +33,7 @@ _MODULES = (
     input_trust,
     authority,
     transaction,
+    signed_approval,
     payment_reliability,
     webhook,
     audit,
@@ -174,10 +176,20 @@ REQUIRED_ADAPTER_SCENARIOS: dict[str, str] = {
     "13. ADAPTER REGISTRY BYPASS": "adapter_registry_bypass",
 }
 
+# Authored mechanism coverage added after the pinned Phase 6 baseline. These
+# run under --all and are not independent security validation.
+REQUIRED_SIGNED_APPROVAL_SCENARIOS: dict[str, str] = {
+    "1. FORGED USER SIGNATURE": "signed_approval_forged_signature",
+    "2. CROSS-MISSION SIGNATURE REPLAY": "signed_approval_cross_mission_replay",
+    "3. POST-SIGNATURE TRANSACTION MUTATION": "signed_approval_post_signature_mutation",
+    "4. PROOF REMOVAL BEFORE EXECUTOR": "signed_approval_proof_removal",
+}
+
 __all__ = [
     "ALL_SCENARIOS",
     "PHASE6_CANONICAL_SCENARIOS",
     "REGISTRY",
     "REQUIRED_ADAPTER_SCENARIOS",
     "REQUIRED_SCENARIOS",
+    "REQUIRED_SIGNED_APPROVAL_SCENARIOS",
 ]
