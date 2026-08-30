@@ -3,6 +3,7 @@ import { Check, X } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Panel } from "@/components/ui/Panel";
 import { ReasonCode } from "@/components/ui/ReasonCode";
+import { TaintedText } from "@/components/ui/Provenance";
 import { cn, inr } from "@/lib/format";
 import type { Offer } from "@/lib/types/pactra";
 
@@ -55,16 +56,17 @@ export function OffersTable({
                     {offer.rank ?? "—"}
                   </td>
                   <td className="py-2.5 pr-3">
-                    <p className="text-[12px] text-[color:var(--color-ink)]">{offer.merchant_name}</p>
-                    <code className="num text-[10.5px] text-[color:var(--color-ink-4)]">
+                    {/* Display name is registry DISPLAY data; the merchant ID
+                        below it is the authoritative payee semantic. The
+                        typographic order says so: mono ID, marked name. */}
+                    <TaintedText value={offer.merchant_name} label="Display name" showMarker={false} />
+                    <code className="num block text-[10.5px] text-[color:var(--color-ink-4)]">
                       {offer.merchant_id}
                     </code>
                   </td>
                   <td className="max-w-[240px] py-2.5 pr-3">
-                    <p className="truncate text-[12px] text-[color:var(--color-ink-2)]" title={offer.title}>
-                      {offer.title}
-                    </p>
-                    <code className="num text-[10.5px] text-[color:var(--color-ink-4)]">
+                    <TaintedText value={offer.title} label="Title" showMarker={false} />
+                    <code className="num block text-[10.5px] text-[color:var(--color-ink-4)]">
                       {offer.product_id}
                     </code>
                   </td>

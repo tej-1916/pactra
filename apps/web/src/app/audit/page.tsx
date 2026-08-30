@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { AuditInspector } from "@/components/audit/AuditInspector";
 import { TamperEvidence } from "@/components/audit/TamperEvidence";
 import { BenchmarkProvenance } from "@/components/benchmark/BenchmarkHeader";
-import { NAV_ITEMS } from "@/components/shell/nav";
+import { ALL_ROUTES } from "@/components/shell/nav";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { LimitationCard } from "@/components/ui/LimitationCard";
 import { Panel } from "@/components/ui/Panel";
@@ -16,7 +16,7 @@ export const metadata: Metadata = { title: "Audit & Replay" };
 
 export default async function AuditPage() {
   const attack = await loadAttackReport();
-  const blurb = NAV_ITEMS.find((item) => item.href === "/audit")?.blurb;
+  const blurb = ALL_ROUTES.find((item) => item.href === "/audit")?.blurb;
 
   const auditScenarios = attack.available
     ? sortByCategory(summarizeScenarios(attack.report)).filter(

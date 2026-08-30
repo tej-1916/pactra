@@ -6,12 +6,20 @@ import { useCallback, useState } from "react";
 import { AuditChain } from "@/components/audit/AuditChain";
 import { ReplayPanel } from "@/components/audit/ReplayPanel";
 import { VerificationPanel } from "@/components/audit/VerificationPanel";
+import { DecisionTrace } from "@/components/trace/DecisionTrace";
 import { DataTierBadge } from "@/components/ui/DataTier";
 import { Panel } from "@/components/ui/Panel";
-import { EmptyState, LoadingSkeleton, UnavailableState } from "@/components/ui/States";
+import { TaintedText } from "@/components/ui/Provenance";
+import {
+  EmptyState,
+  LoadingSkeleton,
+  PartialDataState,
+  UnavailableState,
+} from "@/components/ui/States";
 import { MissionStateBadge, VerificationBadge } from "@/components/ui/StatusBadges";
 import { api } from "@/lib/api/client";
 import { cn, count, relativeTime, shortId } from "@/lib/format";
+import { describeReasonCode } from "@/lib/reason-codes";
 import { useKeyedLoad } from "@/lib/hooks/useKeyedLoad";
 import { useMissionRegister } from "@/lib/hooks/useMissionRegister";
 import type { AuditEvent, AuditVerification, Mission, MissionReplay } from "@/lib/types/pactra";
@@ -95,8 +103,10 @@ export function AuditInspector() {
                 )}
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-[12px] text-[color:var(--color-ink)]">
-                    {entry.rawQuery ?? "(no raw query)"}
+                  <span className="block min-w-0 truncate text-[12px]">
+                    {/* User free text. Sanitized and bidi-isolated like any
+                        other untrusted display string. */}
+                    <TaintedText value={entry.rawQuery} label="Query" showMarker={false} />
                   </span>
                   <span className="num block text-[10.5px] text-[color:var(--color-ink-4)]">
                     {shortId(entry.id, 10)} · {relativeTime(entry.createdAt)}
@@ -129,8 +139,8 @@ export function AuditInspector() {
                 </div>
               }
             >
-              <p className="text-[12.5px] text-[color:var(--color-ink-2)]">
-                {data.mission.raw_query ?? "(no raw query)"}
+              <p className="text-[12.5px]">
+                <TaintedText value={data.mission.raw_query} label="Raw query" />
               </p>
               <p className="num mt-1 text-[11px] text-[color:var(--color-ink-4)]">
                 {data.mission.id} · {count(data.events?.length ?? 0)} events
@@ -158,6 +168,34 @@ export function AuditInspector() {
           </Panel>
 
           {data.replay ? <ReplayPanel replay={data.replay} /> : null}
+
+          {data.replay ? (
+            <Panel
+              title="Decision Trace"
+              subtitle="The same verified events, projected into ADMIT → BIND → EXECUTE. What happened, why, and what can happen next — allow-listed, and carrying no raw payload."
+              actions={<DataTierBadge tier="live" />}
+            >
+              {data.replay.trusted ? (
+                <DecisionTrace entries={data.replay.decision_trace} />
+              ) : (
+                <PartialDataState
+                  title="No trusted trace"
+                  detail={
+                    <>
+                      Replay returned <code className="num">trusted: false</code> with reason code{" "}
+                      <code className="num">{data.replay.reason_code}</code>
+                      {describeReasonCode(data.replay.reason_code)
+                        ? ` — ${describeReasonCode(data.replay.reason_code)}`
+                        : ""}
+                      . A trace is produced only after the hash chain verifies and every
+                      enforcement event can be interpreted, so it is empty rather than partially
+                      reconstructed.
+                    </>
+                  }
+                />
+              )}
+            </Panel>
+          ) : null}
         </>
       )}
     </div>

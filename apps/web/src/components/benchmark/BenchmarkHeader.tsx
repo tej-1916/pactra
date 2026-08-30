@@ -29,14 +29,25 @@ export function BenchmarkProvenance({
   sourceFile: string;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-[color:var(--color-advisory)]/25 bg-[color:var(--color-advisory)]/[0.04] px-3.5 py-2.5">
-      <DataTierBadge tier="benchmark" />
-      <Fact label="run" value={runId.replace(/^attack-run-/, "").slice(0, 8)} title={runId} />
-      <Fact label="harness" value={harnessVersion} />
-      <Fact label="measured" value={timestamp(startedAt)} />
-      <Fact label="scenarios" value={String(scenarios)} />
-      <Fact label="iterations" value={`×${iterations}`} />
-      <Fact label="file" value={sourceFile} />
+    <div className="rounded-lg border border-[color:var(--color-advisory)]/25 bg-[color:var(--color-advisory)]/[0.04] px-3.5 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <DataTierBadge tier="benchmark" />
+        <Fact label="run" value={runId.replace(/^attack-run-/, "").slice(0, 8)} title={runId} />
+        <Fact label="harness" value={harnessVersion} />
+        <Fact label="measured" value={timestamp(startedAt)} />
+        <Fact label="scenarios" value={String(scenarios)} />
+        <Fact label="iterations" value={`×${iterations}`} />
+        <Fact label="file" value={sourceFile} />
+      </div>
+      {/* Stated on every surface that shows a harness number, not buried in a
+          limitations appendix. These scenarios were written by the same project
+          they test, so a high pass rate measures internal regression coverage
+          and nothing else. */}
+      <p className="mt-2 border-t border-[color:var(--color-advisory)]/20 pt-2 text-[11px] leading-relaxed text-[color:var(--color-ink-3)]">
+        An AUTHORED SYNTHETIC regression and evaluation harness — not independent red-team
+        validation, not certification, and not an external audit. It measures whether this project&rsquo;s
+        own scenarios still behave as this project expects.
+      </p>
     </div>
   );
 }

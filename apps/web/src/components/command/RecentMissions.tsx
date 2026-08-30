@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ArrowUpRight, Info } from "lucide-react";
 
 import { Panel } from "@/components/ui/Panel";
+import { TaintedText } from "@/components/ui/Provenance";
 import { EmptyState, LoadingSkeleton, UnavailableState } from "@/components/ui/States";
 import { MissionStateBadge, PolicyDecisionBadge } from "@/components/ui/StatusBadges";
 import { api } from "@/lib/api/client";
@@ -159,8 +160,8 @@ function MissionRow({ row }: { row: Row }) {
       className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition-colors hover:bg-[color:var(--color-surface-2)]"
     >
       <div className="min-w-[220px] flex-1">
-        <p className="truncate text-[12.5px] text-[color:var(--color-ink)]">
-          {mission.raw_query ?? <span className="text-[color:var(--color-ink-4)]">(no raw query)</span>}
+        <p className="min-w-0 truncate text-[12.5px]">
+          <TaintedText value={mission.raw_query} label="Query" showMarker={false} />
         </p>
         <p className="num mt-0.5 text-[11px] text-[color:var(--color-ink-4)]">
           {shortId(mission.id, 8)} · {relativeTime(mission.created_at)} · {mission.offers.length} offers

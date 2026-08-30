@@ -1,12 +1,11 @@
 import {
   Activity,
   Boxes,
-  CreditCard,
   Crosshair,
   FileClock,
   Gauge,
   LayoutGrid,
-  Route,
+  Store,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -18,18 +17,25 @@ export interface NavItem {
   blurb: string;
 }
 
-export const NAV_ITEMS: NavItem[] = [
+/**
+ * Primary navigation. Four items, and the list is deliberately short.
+ *
+ * These are the four questions a reader actually arrives with: what is this,
+ * what did it do to a real transaction, what happens when someone attacks it,
+ * and can any of it be verified after the fact.
+ */
+export const PRIMARY_NAV: NavItem[] = [
   {
     href: "/",
-    label: "Command Center",
+    label: "Overview",
     icon: LayoutGrid,
-    blurb: "System posture, security invariants, and where every number comes from.",
+    blurb: "ADMIT → BIND → EXECUTE, system status, and where every number on this console comes from.",
   },
   {
-    href: "/missions",
-    label: "Missions",
-    icon: Route,
-    blurb: "User intent through the kernel to an authorized payment, stage by stage.",
+    href: "/commerce",
+    label: "Live Commerce",
+    icon: Store,
+    blurb: "One mission end to end: offer, policy, authorization, payment state, and its Decision Trace.",
   },
   {
     href: "/attack-lab",
@@ -38,26 +44,32 @@ export const NAV_ITEMS: NavItem[] = [
     blurb: "Adversarial scenarios, what each one targets, and what the kernel did about it.",
   },
   {
-    href: "/transactions",
-    label: "Transactions",
-    icon: CreditCard,
-    blurb: "PaymentIntent observability and the state machine that governs it.",
-  },
-  {
     href: "/audit",
-    label: "Audit & Replay",
+    label: "Audit",
     icon: FileClock,
-    blurb: "The hash chain, its verification, and deterministic reconstruction from history.",
+    blurb: "The hash chain, its verification, deterministic replay, and the evidence behind each event.",
   },
+];
+
+/**
+ * Secondary navigation.
+ *
+ * RISK LIVES HERE, and that placement is a product decision rather than a
+ * layout one. Risk is advisory: it grants no authority, changes no policy,
+ * issues no authorization and executes no payment. Promoting it to primary
+ * navigation would tell a reader it decides something, which is the single
+ * most expensive misreading this console could invite.
+ */
+export const SECONDARY_NAV: NavItem[] = [
   {
     href: "/risk",
-    label: "Risk Intelligence",
+    label: "Risk",
     icon: Gauge,
-    blurb: "Advisory risk index, factor contributions, and the evaluation disclosure.",
+    blurb: "Advisory risk index, factor contributions, and the evaluation disclosure. Advisory only.",
   },
   {
     href: "/adapters",
-    label: "Protocol Adapters",
+    label: "Adapters",
     icon: Boxes,
     blurb: "The translation boundary and exactly what PACTRA does and does not speak.",
   },
@@ -66,5 +78,30 @@ export const NAV_ITEMS: NavItem[] = [
     label: "System",
     icon: Activity,
     blurb: "Architecture, vocabulary, and the documented boundaries of the contract.",
+  },
+];
+
+/**
+ * Every navigable route, for the page-header lookup.
+ *
+ * `/missions` and `/transactions` are reachable and linked from Live Commerce
+ * — they are the mission workbench and the payment observability surface — but
+ * they are not primary destinations, so they carry blurbs here without taking a
+ * slot in a four-item nav.
+ */
+export const ALL_ROUTES: NavItem[] = [
+  ...PRIMARY_NAV,
+  ...SECONDARY_NAV,
+  {
+    href: "/missions",
+    label: "Mission workbench",
+    icon: Store,
+    blurb: "Run a mission through the kernel stage by stage, from intent to authorized payment.",
+  },
+  {
+    href: "/transactions",
+    label: "Transactions",
+    icon: Store,
+    blurb: "PaymentIntent observability and the state machine that governs it.",
   },
 ];

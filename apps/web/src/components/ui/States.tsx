@@ -1,18 +1,27 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, Inbox, PlugZap } from "lucide-react";
+import { AlertTriangle, Inbox, PlugZap, ShieldX, SplitSquareVertical } from "lucide-react";
 
 import { cn } from "@/lib/format";
 
 /**
- * Four states, kept visually distinct because they are four different facts.
+ * Six states, kept visually distinct because they are six different facts.
  *
  *   LoadingSkeleton  — we are still asking.
  *   EmptyState       — we asked, and nothing exists yet.
  *   UnavailableState — we could not ask. NOT the same as "zero".
- *   ErrorState       — we asked and were refused, with a reason code.
+ *   ErrorState       — we asked and something went wrong, with a reason code.
+ *   RefusalState     — we asked and a CONTROL refused. Not an error: the kernel
+ *                      working. Rendered in the secure tone for exactly the
+ *                      reason a blocked attack is never red.
+ *   PartialDataState — some of the answer arrived and some did not, and the
+ *                      screen says which.
+ *
+ * Plus `NotProvided`, the inline form: this build knows the field exists and
+ * the backend does not expose it yet.
  *
  * Collapsing "unavailable" into "empty" is the specific failure this file
  * exists to prevent: a stopped backend must never render as `0 transactions`.
+ * Collapsing "refused" into "error" is the second: a refusal is an ANSWER.
  */
 
 export function LoadingSkeleton({ rows = 3, className }: { rows?: number; className?: string }) {
@@ -92,5 +101,75 @@ export function ErrorState(props: StateProps) {
       tone="border-[color:var(--color-critical)]/35 bg-[color:var(--color-critical)]/[0.05] text-[color:var(--color-critical)]"
       icon={<AlertTriangle aria-hidden className="size-4" />}
     />
+  );
+}
+
+/**
+ * A security refusal.
+ *
+ * Deliberately NOT red. A refusal is a control holding — the same house rule
+ * that keeps a blocked attack out of the critical palette applies here, and a
+ * screen that paints every refusal as a failure teaches a reader the system
+ * broke when in fact it worked.
+ */
+export function RefusalState(props: StateProps) {
+  return (
+    <Frame
+      {...props}
+      tone="border-[color:var(--color-secure)]/40 bg-[color:var(--color-secure)]/[0.06] text-[color:var(--color-secure)]"
+      icon={<ShieldX aria-hidden className="size-4" />}
+    />
+  );
+}
+
+/** Some of the answer arrived and some did not. The screen names which. */
+export function PartialDataState(props: StateProps) {
+  return (
+    <Frame
+      {...props}
+      tone="border-[color:var(--color-advisory)]/35 bg-[color:var(--color-advisory)]/[0.05] text-[color:var(--color-advisory)]"
+      icon={<SplitSquareVertical aria-hidden className="size-4" />}
+    />
+  );
+}
+
+/**
+ * An inline slot for a field the backend does not expose yet.
+ *
+ * The distinction from `—` matters and is the whole reason this exists: an
+ * em-dash reads as "this is empty", while this reads as "this build knows the
+ * field exists and PACTRA does not provide it at this baseline". Inventing a
+ * plausible value, or quietly omitting the row, would both be worse.
+ */
+export function NotProvided({
+  what,
+  since,
+  className,
+}: {
+  /** The field, named exactly as the eventual contract will name it. */
+  what?: string;
+  /** Which phase is expected to populate it, when that is known. */
+  since?: string;
+  className?: string;
+}) {
+  const title = [
+    what ? `${what} is not part of the current backend read contract.` : "Not provided by the current backend read contract.",
+    since ? `Expected from ${since}.` : "",
+    "Nothing is inferred or filled in for it.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <span
+      title={title}
+      className={cn(
+        "label-xs inline-flex items-center gap-1 rounded border border-dashed border-[color:var(--color-line-strong)] px-1.5 py-[2px] text-[color:var(--color-ink-4)]",
+        className,
+      )}
+    >
+      NOT YET PROVIDED
+      {since ? <span className="font-normal normal-case tracking-normal">· {since}</span> : null}
+    </span>
   );
 }

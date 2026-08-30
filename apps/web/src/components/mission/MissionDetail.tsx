@@ -5,6 +5,7 @@ import { RefreshCw } from "lucide-react";
 
 import { AuditChain } from "@/components/audit/AuditChain";
 import { ReplayPanel } from "@/components/audit/ReplayPanel";
+import { DecisionTrace } from "@/components/trace/DecisionTrace";
 import { VerificationPanel } from "@/components/audit/VerificationPanel";
 import { AuthorizationPanel } from "@/components/mission/AuthorizationPanel";
 import { MissionPipeline, type PipelineStage } from "@/components/mission/MissionPipeline";
@@ -18,13 +19,21 @@ import { Badge } from "@/components/ui/Badge";
 import { DataTierBadge } from "@/components/ui/DataTier";
 import { KeyValue, KeyValueGrid } from "@/components/ui/KeyValue";
 import { Panel } from "@/components/ui/Panel";
+import { TaintedText } from "@/components/ui/Provenance";
 import { ReasonCode } from "@/components/ui/ReasonCode";
-import { EmptyState, ErrorState, LoadingSkeleton, UnavailableState } from "@/components/ui/States";
+import {
+  EmptyState,
+  ErrorState,
+  LoadingSkeleton,
+  PartialDataState,
+  UnavailableState,
+} from "@/components/ui/States";
 import { MissionStateBadge, PolicyDecisionBadge } from "@/components/ui/StatusBadges";
 import { TabPanel, Tabs } from "@/components/ui/Tabs";
 import { api } from "@/lib/api/client";
 import type { ApiResult } from "@/lib/api/result";
 import { inr, shortId, timestamp } from "@/lib/format";
+import { sanitizeDisplayString } from "@/lib/tainted";
 import { newIdempotencyKey, readRegister } from "@/lib/hooks/useMissionRegister";
 import type {
   ApprovalChallenge,
@@ -185,7 +194,10 @@ export function MissionDetail({ missionId }: { missionId: string }) {
     <div className="space-y-5">
       <PageHeader
         eyebrow="Mission"
-        title={data.raw_query ?? "Mission"}
+        // The heading is a string prop, so it cannot be wrapped in
+        // `TaintedText` — it is sanitized directly instead. A raw query with a
+        // bidi override in the page title would reorder the whole header.
+        title={sanitizeDisplayString(data.raw_query).text || "Mission"}
         description={
           <span className="num text-[12px]">
             {data.id} · created {timestamp(data.created_at)} · quantity {data.quantity}
@@ -274,7 +286,15 @@ export function MissionDetail({ missionId }: { missionId: string }) {
             {selectedOffer ? (
               <Panel title="Selected offer">
                 <KeyValueGrid columns={2}>
-                  <KeyValue label="Merchant"><span className="num">{selectedOffer.merchant_name}</span></KeyValue>
+                  <KeyValue
+                    label="Merchant display name"
+                    hint="Registry display data. The authoritative payee semantic is the merchant ID."
+                  >
+                    <TaintedText value={selectedOffer.merchant_name} label="Display name" />
+                  </KeyValue>
+                  <KeyValue label="Merchant ID" hint="Server-registered. This is the authoritative value.">
+                    <span className="num">{selectedOffer.merchant_id}</span>
+                  </KeyValue>
                   <KeyValue label="Amount"><span className="num">{inr(selectedOffer.amount_inr)}</span></KeyValue>
                   <KeyValue label="Rating"><span className="num">{selectedOffer.rating.toFixed(1)}</span></KeyValue>
                   <KeyValue label="Offer version">
@@ -410,6 +430,32 @@ export function MissionDetail({ missionId }: { missionId: string }) {
               <StateFor load={replay} noun="replay result" />
             </Panel>
           )}
+
+          <Panel
+            title="Decision Trace"
+            subtitle="ADMIT → BIND → EXECUTE, projected from the same verified events. What happened, why, and what can happen next."
+            actions={<DataTierBadge tier="live" />}
+          >
+            {replay.status === "done" && replay.result.kind === "ok" ? (
+              replay.result.data.trusted ? (
+                <DecisionTrace entries={replay.result.data.decision_trace} />
+              ) : (
+                <PartialDataState
+                  title="No trusted trace"
+                  detail={
+                    <>
+                      Replay returned <code className="num">trusted: false</code> with reason code{" "}
+                      <code className="num">{replay.result.data.reason_code}</code>. A trace is
+                      produced only after the hash chain verifies and every enforcement event can be
+                      interpreted.
+                    </>
+                  }
+                />
+              )
+            ) : (
+              <StateFor load={replay} noun="decision trace" />
+            )}
+          </Panel>
         </div>
       </TabPanel>
     </div>
@@ -483,7 +529,7 @@ function buildStages({
       name: "User intent",
       status: "done",
       reason: mission.raw_query
-        ? `Free text captured verbatim: “${mission.raw_query}”. It is stored as data and is never a security input.`
+        ? `Free text captured verbatim: “${sanitizeDisplayString(mission.raw_query).text}”. It is stored as data and is never a security input.`
         : "No raw query was supplied. Constraints alone drove the mission.",
     },
     {

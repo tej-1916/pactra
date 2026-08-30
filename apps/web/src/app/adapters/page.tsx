@@ -3,7 +3,7 @@ import { Check, X } from "lucide-react";
 
 import { SupportMatrix } from "@/components/adapters/SupportMatrix";
 import { TranslationBoundary } from "@/components/adapters/TranslationBoundary";
-import { NAV_ITEMS } from "@/components/shell/nav";
+import { ALL_ROUTES } from "@/components/shell/nav";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { DataTierBadge } from "@/components/ui/DataTier";
 import { LimitationCard } from "@/components/ui/LimitationCard";
@@ -20,7 +20,7 @@ export const metadata: Metadata = { title: "Protocol Adapters" };
  * with the claim.
  */
 export default function AdaptersPage() {
-  const blurb = NAV_ITEMS.find((item) => item.href === "/adapters")?.blurb;
+  const blurb = ALL_ROUTES.find((item) => item.href === "/adapters")?.blurb;
   const mcp = PROTOCOL_SUPPORT.find((entry) => entry.protocol === "MCP");
 
   return (

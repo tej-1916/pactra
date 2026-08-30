@@ -77,7 +77,7 @@ export function Tabs({
             className={cn(
               "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors",
               selected
-                ? "bg-[color:var(--color-surface-3)] text-[color:var(--color-ink)] shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]"
+                ? "raised bg-[color:var(--color-surface-3)] text-[color:var(--color-ink)]"
                 : "text-[color:var(--color-ink-3)] hover:bg-[color:var(--color-surface-3)]/50 hover:text-[color:var(--color-ink-2)]",
             )}
           >

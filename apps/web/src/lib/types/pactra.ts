@@ -289,6 +289,12 @@ export interface MissionReplay {
   verification: AuditVerification;
   state: MissionProjection | null;
   comparison: StateComparison | null;
+  /**
+   * The frozen C1 Decision Trace. ALWAYS an array — `[]` when no trusted
+   * projection could be produced — so a consumer never has to distinguish
+   * "absent" from "empty", and the empty case is a statement rather than a gap.
+   */
+  decision_trace: DecisionTraceEntry[];
   unsupported_events: Record<string, unknown>[];
   detail: string | null;
 }
@@ -358,4 +364,105 @@ export interface RiskAssessment {
   policy_decision: string | null;
   policy_reason_codes: string[];
   advisory: true;
+}
+
+// --------------------------------------------------------------------------- //
+// C1 Decision Trace — FROZEN
+//
+// `docs/c1-trust-contract.md` freezes these schemas, enum values, stage
+// mappings, ordering, and the endpoint they arrive on. Everything below is
+// transcribed from `packages/schemas/audit.py` and must not be widened,
+// narrowed, or renamed here: a union that admits a value the backend cannot
+// emit is a UI that can render a decision PACTRA never made.
+//
+// There is NO new endpoint. The trace is the `decision_trace` array on the
+// existing read-only, audit-verified `GET /api/v1/missions/{id}/replay`.
+// --------------------------------------------------------------------------- //
+
+/** `packages/schemas/audit.py :: DecisionStage` */
+export type DecisionStage = "ADMIT" | "BIND" | "EXECUTE";
+
+/** The one true order. ADMIT precedes BIND precedes EXECUTE, always. */
+export const DECISION_STAGES: readonly DecisionStage[] = ["ADMIT", "BIND", "EXECUTE"];
+
+/** `packages/schemas/audit.py :: DecisionTraceVerdict` */
+export type DecisionVerdict =
+  | "ACCEPTED"
+  | "REFUSED"
+  | "PENDING"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "IGNORED"
+  | "ADVISORY";
+
+/** `packages/schemas/audit.py :: DecisionTraceNextAction` */
+export type DecisionNextAction =
+  | "CONTINUE_ADMIT"
+  | "CONTINUE_BIND"
+  | "AWAIT_USER_SIGNATURE"
+  | "CREATE_PAYMENT_INTENT"
+  | "DISPATCH_PAYMENT"
+  | "AWAIT_PROVIDER"
+  | "RECONCILE_PAYMENT"
+  | "RETRY_PAYMENT"
+  | "NONE";
+
+/** `packages/schemas/policy.py :: PolicyOutcome`, as it appears in the trace. */
+export type PolicyOutcome = "ALLOW" | "REQUIRE_APPROVAL" | "DENY";
+
+/** `packages/schemas/payment.py :: PaymentIntentState` */
+export type PaymentIntentState =
+  | "CREATED"
+  | "QUEUED"
+  | "PROCESSING"
+  | "PROVIDER_PENDING"
+  | "SUCCEEDED"
+  | "FAILED_RETRYABLE"
+  | "FAILED_TERMINAL"
+  | "CANCELLED";
+
+/**
+ * `packages/schemas/audit.py :: DecisionTraceEvidenceRef`
+ *
+ * Exactly three fields. The raw audit payload is deliberately NOT reachable
+ * from here — `event_id` is the handle an operator uses to go and look.
+ */
+export interface DecisionTraceEvidence {
+  event_id: string;
+  sequence: number;
+  actor: string;
+}
+
+/**
+ * `packages/schemas/audit.py :: DecisionTraceEntry`
+ *
+ * An ACTION / SECURITY DECISION record, not model chain-of-thought. The
+ * backend model carries no signature, nonce, key material, approval-message
+ * bytes, merchant free text, provider secret, or reasoning field, and this
+ * interface deliberately offers no optional slot where one could be added.
+ *
+ * Every field is present on every entry. Nullable fields arrive as JSON `null`
+ * rather than being omitted, which is why they are `T | null` and not `T?`:
+ * "the source event recorded none" is a fact the trace states, and an optional
+ * property would let a consumer confuse it with "this build forgot to read it".
+ */
+export interface DecisionTraceEntry {
+  stage: DecisionStage;
+  event_type: string;
+  verdict: DecisionVerdict;
+  /** `[]` means none recorded. Never null. */
+  reason_codes: string[];
+  /** Null when the source event recorded none. NEVER inferred. */
+  invariant_id: string | null;
+  /** Null for non-authorization events. */
+  approval_scheme: ApprovalScheme | null;
+  /** Null except on policy decisions. */
+  policy_outcome: PolicyOutcome | null;
+  /** Null when the source event records no payment state. */
+  payment_state: PaymentIntentState | null;
+  /** True only for `RISK_ASSESSED`. Advisory evidence grants no authority. */
+  advisory: boolean;
+  next_action: DecisionNextAction;
+  evidence: DecisionTraceEvidence;
+  recorded_at: string;
 }

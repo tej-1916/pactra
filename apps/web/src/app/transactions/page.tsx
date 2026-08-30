@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { NAV_ITEMS } from "@/components/shell/nav";
+import { ALL_ROUTES } from "@/components/shell/nav";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { TransactionsView } from "@/components/transactions/TransactionsView";
 import { Badge } from "@/components/ui/Badge";
@@ -12,7 +12,7 @@ import { TimeoutAfterCreate } from "@/components/viz/TimeoutAfterCreate";
 export const metadata: Metadata = { title: "Transactions" };
 
 export default function TransactionsPage() {
-  const blurb = NAV_ITEMS.find((item) => item.href === "/transactions")?.blurb;
+  const blurb = ALL_ROUTES.find((item) => item.href === "/transactions")?.blurb;
 
   return (
     <div className="space-y-5">

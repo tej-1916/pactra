@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { RunnerNotConnected } from "@/components/benchmark/BenchmarkHeader";
 import { EvaluationDisclosure } from "@/components/risk/EvaluationDisclosure";
 import { RiskExplorer } from "@/components/risk/RiskExplorer";
-import { NAV_ITEMS } from "@/components/shell/nav";
+import { ALL_ROUTES } from "@/components/shell/nav";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Badge } from "@/components/ui/Badge";
 import { Panel } from "@/components/ui/Panel";
@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: "Risk Intelligence" };
 
 export default async function RiskPage() {
   const evaluation = await loadRiskEvaluation();
-  const blurb = NAV_ITEMS.find((item) => item.href === "/risk")?.blurb;
+  const blurb = ALL_ROUTES.find((item) => item.href === "/risk")?.blurb;
 
   return (
     <div className="space-y-5">

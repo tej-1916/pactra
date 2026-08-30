@@ -13,6 +13,11 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   outputFileTracingRoot: process.cwd(),
+  // `next dev` otherwise writes AGENTS.md and CLAUDE.md into this workspace on
+  // every start. They are generated tool output rather than authored guidance
+  // for this project, and a file that reappears untracked after each dev run is
+  // noise in every future diff. Turned off at the source rather than ignored.
+  agentRules: false,
 };
 
 export default nextConfig;

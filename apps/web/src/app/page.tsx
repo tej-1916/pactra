@@ -6,6 +6,8 @@ import { CategoryBreakdown } from "@/components/command/CategoryBreakdown";
 import { PostureBanner } from "@/components/command/PostureBanner";
 import { RecentMissions } from "@/components/command/RecentMissions";
 import { SecuritySummary } from "@/components/command/SecuritySummary";
+import { AuthorityClaim, StagePipeline } from "@/components/command/StagePipeline";
+import { SystemStatus } from "@/components/command/SystemStatus";
 import { Badge } from "@/components/ui/Badge";
 import { DataTierBadge } from "@/components/ui/DataTier";
 import { InvariantCard } from "@/components/ui/InvariantCard";
@@ -19,21 +21,36 @@ import { headlineInvariants, PROTOCOL_SUPPORT } from "@/lib/reference";
 export const dynamic = "force-dynamic";
 
 /**
- * Command Center.
+ * Overview.
+ *
+ * The first thing it establishes is the system's shape — ADMIT → BIND →
+ * EXECUTE — because every other surface on this console is organised by those
+ * three stages, including the Decision Trace.
  *
  * Three data tiers appear on this page and each one is labelled where it lands:
  * the invariant contract is GENERATED from source, the posture metrics are a
- * LAST VERIFIED DEVELOPMENT BENCHMARK, and the mission list is LIVE (and
- * browser-scoped, which it also says). Nothing on this page is a number typed
- * into a component.
+ * LAST VERIFIED DEVELOPMENT BENCHMARK, and system status is LIVE. Nothing on
+ * this page is a number typed into a component.
  */
-export default async function CommandCenterPage() {
+export default async function OverviewPage() {
   const [attack, risk] = await Promise.all([loadAttackReport(), loadRiskEvaluation()]);
   const invariants = headlineInvariants();
 
   return (
     <div className="space-y-5">
       <PostureBanner />
+
+      <Panel
+        title="ADMIT → BIND → EXECUTE"
+        subtitle="The three stages every mission passes through, and the three questions the Decision Trace answers about each one. The same stage names appear on every screen in this console."
+      >
+        <div className="space-y-3">
+          <StagePipeline />
+          <AuthorityClaim />
+        </div>
+      </Panel>
+
+      <SystemStatus />
 
       <Panel
         title="Critical invariants — the test contract"

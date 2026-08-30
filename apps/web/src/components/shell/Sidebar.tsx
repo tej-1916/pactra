@@ -7,11 +7,18 @@ import { Menu, X } from "lucide-react";
 
 import { ApiStatus } from "./ApiStatus";
 import { Wordmark } from "./Brand";
-import { NAV_ITEMS } from "./nav";
+import { PRIMARY_NAV, SECONDARY_NAV, type NavItem } from "./nav";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { cn } from "@/lib/format";
 
 /**
  * The application shell's navigation.
+ *
+ * Two groups, and the split carries meaning rather than saving space. The four
+ * primary items are the questions a reader arrives with. The secondary group
+ * holds Risk, Adapters and System — and Risk is there BECAUSE it is advisory:
+ * a risk score decides nothing in PACTRA, and a nav that gave it equal billing
+ * with the decision surfaces would imply otherwise.
  *
  * Desktop-first, as the demo requires, but it collapses to a disclosure below
  * `lg` rather than disappearing — a security console that cannot be navigated
@@ -38,7 +45,7 @@ export function Sidebar() {
         <div
           aria-hidden
           onClick={() => setOpen(false)}
-          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          className="scrim fixed inset-0 z-40 lg:hidden"
         />
       ) : null}
 
@@ -56,47 +63,89 @@ export function Sidebar() {
           </Link>
         </div>
 
-        <ul className="flex-1 space-y-0.5 overflow-y-auto p-2">
-          {NAV_ITEMS.map((item) => {
-            const active =
-              item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-            const Icon = item.icon;
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  title={item.blurb}
-                  aria-current={active ? "page" : undefined}
-                  onClick={() => setOpen(false)}
-                  className={cn(
-                    "group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition-colors",
-                    active
-                      ? "bg-[color:var(--color-surface-3)] text-[color:var(--color-ink)]"
-                      : "text-[color:var(--color-ink-3)] hover:bg-[color:var(--color-surface-2)] hover:text-[color:var(--color-ink-2)]",
-                  )}
-                >
-                  {active ? (
-                    <span
-                      aria-hidden
-                      className="absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-[color:var(--color-accent)]"
-                    />
-                  ) : null}
-                  <Icon
-                    aria-hidden
-                    className={cn(
-                      "size-4 shrink-0",
-                      active ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-ink-4)]",
-                    )}
-                  />
-                  {item.label}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="flex-1 overflow-y-auto p-2">
+          <ul className="space-y-0.5">
+            {PRIMARY_NAV.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                onNavigate={() => setOpen(false)}
+              />
+            ))}
+          </ul>
+
+          <p className="label-xs mt-5 mb-1.5 px-2.5 text-[color:var(--color-ink-4)]">
+            Supporting
+          </p>
+          <ul className="space-y-0.5">
+            {SECONDARY_NAV.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                onNavigate={() => setOpen(false)}
+                secondary
+              />
+            ))}
+          </ul>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 border-t border-[color:var(--color-line)] px-3 py-2">
+          <span className="label-xs text-[color:var(--color-ink-4)]">Theme</span>
+          <ThemeToggle />
+        </div>
 
         <ApiStatus />
       </nav>
     </>
+  );
+}
+
+function NavLink({
+  item,
+  pathname,
+  onNavigate,
+  secondary = false,
+}: {
+  item: NavItem;
+  pathname: string;
+  onNavigate: () => void;
+  secondary?: boolean;
+}) {
+  const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+  const Icon = item.icon;
+  return (
+    <li>
+      <Link
+        href={item.href}
+        title={item.blurb}
+        aria-current={active ? "page" : undefined}
+        onClick={onNavigate}
+        className={cn(
+          "group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium transition-colors",
+          secondary ? "text-[12px]" : "text-[12.5px]",
+          active
+            ? "bg-[color:var(--color-surface-3)] text-[color:var(--color-ink)]"
+            : "text-[color:var(--color-ink-3)] hover:bg-[color:var(--color-surface-2)] hover:text-[color:var(--color-ink-2)]",
+        )}
+      >
+        {active ? (
+          <span
+            aria-hidden
+            className="gradient-path absolute inset-y-1.5 left-0 w-[2px] rounded-full"
+          />
+        ) : null}
+        <Icon
+          aria-hidden
+          className={cn(
+            "shrink-0",
+            secondary ? "size-3.5" : "size-4",
+            active ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-ink-4)]",
+          )}
+        />
+        {item.label}
+      </Link>
+    </li>
   );
 }

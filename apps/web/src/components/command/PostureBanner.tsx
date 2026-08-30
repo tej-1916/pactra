@@ -14,7 +14,7 @@ export function PostureBanner() {
     <section className="panel relative overflow-hidden bg-[color:var(--color-surface)] p-5 sm:p-6">
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(680px_240px_at_15%_-30%,rgba(79,141,253,0.10),transparent_70%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(680px_240px_at_15%_-30%,color-mix(in_srgb,var(--color-accent)_10%,transparent),transparent_70%)]"
       />
       <div className="relative flex flex-col gap-5">
         <div className="flex flex-wrap items-end justify-between gap-4">

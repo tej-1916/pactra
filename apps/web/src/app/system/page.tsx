@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { NAV_ITEMS } from "@/components/shell/nav";
+import { ALL_ROUTES } from "@/components/shell/nav";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ArchitectureMap } from "@/components/system/ArchitectureMap";
 import { VocabularyPanel } from "@/components/system/VocabularyPanel";
@@ -14,7 +14,7 @@ import { LIMITATIONS, VOCABULARY } from "@/lib/reference";
 export const metadata: Metadata = { title: "System" };
 
 export default function SystemPage() {
-  const blurb = NAV_ITEMS.find((item) => item.href === "/system")?.blurb;
+  const blurb = ALL_ROUTES.find((item) => item.href === "/system")?.blurb;
 
   return (
     <div className="space-y-5">

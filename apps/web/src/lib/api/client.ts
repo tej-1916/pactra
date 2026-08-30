@@ -8,6 +8,7 @@ import type {
   Authorization,
   AuditEvent,
   AuditVerification,
+  HealthResponse,
   Mission,
   MissionReplay,
   PaymentIntent,
@@ -63,6 +64,9 @@ export interface CreateMissionBody {
 }
 
 export const api = {
+  /** Liveness plus the two facts worth asserting: environment and test mode. */
+  getHealth: () => call<HealthResponse>("/api/pactra/health"),
+
   createMission: (body: CreateMissionBody) =>
     call<Mission>("/api/pactra/missions", {
       method: "POST",

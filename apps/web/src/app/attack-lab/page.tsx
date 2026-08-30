@@ -5,7 +5,7 @@ import { AttackLabExplorer } from "@/components/attack/AttackLabExplorer";
 import { BenchmarkProvenance, RunnerNotConnected } from "@/components/benchmark/BenchmarkHeader";
 import { CategoryBreakdown } from "@/components/command/CategoryBreakdown";
 import { SecuritySummary } from "@/components/command/SecuritySummary";
-import { NAV_ITEMS } from "@/components/shell/nav";
+import { ALL_ROUTES } from "@/components/shell/nav";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Badge } from "@/components/ui/Badge";
 import { LimitationCard } from "@/components/ui/LimitationCard";
@@ -26,7 +26,7 @@ export const metadata: Metadata = { title: "Attack Lab" };
  */
 export default async function AttackLabPage() {
   const attack = await loadAttackReport();
-  const blurb = NAV_ITEMS.find((item) => item.href === "/attack-lab")?.blurb;
+  const blurb = ALL_ROUTES.find((item) => item.href === "/attack-lab")?.blurb;
 
   return (
     <div className="space-y-5">

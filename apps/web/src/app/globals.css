@@ -1,12 +1,16 @@
 @import "tailwindcss";
 
 /*
- * PACTRA console design tokens.
+ * PACTRA design tokens.
  *
- * Dark-first and committed to it: this is a security-operations surface, and a
- * light variant would be a second palette to keep semantically honest for no
- * operational gain. The `color-scheme` is pinned so form controls and
- * scrollbars follow.
+ * LIGHT IS THE DEFAULT and dark is its inverse. A judge demo runs on a bright
+ * projector far more often than in a dark room, and the surface this console
+ * renders — authoritative transaction fields beside untrusted merchant text —
+ * needs the higher contrast ceiling that a light ground gives it.
+ *
+ * Both palettes are defined here and NOWHERE else. Every component references
+ * `var(--color-*)`, so a theme swap is a variable swap; there is no component
+ * anywhere that hardcodes a hex value, and none should be added.
  *
  * COLOUR SEMANTICS — the one rule that matters here:
  *
@@ -19,38 +23,119 @@
  *
  * Severity is rendered OUTLINED; a result is rendered SOLID. That is what keeps
  * "SEVERITY: CRITICAL" from reading as "RESULT: FAILED" at a glance.
+ *
+ * GRADIENT BUDGET. Gradient is reserved for four things and is not decoration:
+ * the ACTIVE decision path, primary buttons, the SELECTED offer, and the
+ * wordmark. Anything else gets a flat surface.
  */
 
 @theme {
-  --color-ground: #06080c;
-  --color-surface: #0b0f16;
-  --color-surface-2: #10151e;
-  --color-surface-3: #161d28;
-  --color-line: #1e2733;
-  --color-line-strong: #2b3646;
+  --color-ground: var(--pactra-ground);
+  --color-surface: var(--pactra-surface);
+  --color-surface-2: var(--pactra-surface-2);
+  --color-surface-3: var(--pactra-surface-3);
+  --color-line: var(--pactra-line);
+  --color-line-strong: var(--pactra-line-strong);
 
-  --color-ink: #e9eef6;
-  --color-ink-2: #a6b2c4;
-  --color-ink-3: #6f7d92;
-  --color-ink-4: #4b586b;
+  --color-ink: var(--pactra-ink);
+  --color-ink-2: var(--pactra-ink-2);
+  --color-ink-3: var(--pactra-ink-3);
+  --color-ink-4: var(--pactra-ink-4);
 
-  --color-accent: #4f8dfd;
-  --color-accent-dim: #12233f;
+  --color-accent: var(--pactra-accent);
+  --color-accent-2: var(--pactra-accent-2);
+  --color-accent-dim: var(--pactra-accent-dim);
 
-  --color-secure: #2fd4a7;
-  --color-advisory: #f2a93b;
-  --color-critical: #ff5f6d;
-  --color-taint: #a986ff;
-  --color-neutral: #7b8aa0;
+  --color-secure: var(--pactra-secure);
+  --color-advisory: var(--pactra-advisory);
+  --color-critical: var(--pactra-critical);
+  --color-taint: var(--pactra-taint);
+  --color-neutral: var(--pactra-neutral);
 
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo,
-    Consolas, "Liberation Mono", monospace;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  /* Space Grotesk for display, Inter for text, IBM Plex Mono for machine
+     values. Every one has a real fallback stack: a font that fails to load
+     must not collapse a table of digits into a proportional mess. */
+  --font-display: var(--font-space-grotesk), ui-sans-serif, system-ui, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), ui-monospace, "SF Mono", "JetBrains Mono",
+    "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
+/* ---------------------------------------------------------------- LIGHT -- */
+/* The default. A root with no `data-theme` renders exactly this. */
 :root {
+  color-scheme: light;
+
+  --pactra-ground: #f4f6fa;
+  --pactra-surface: #ffffff;
+  --pactra-surface-2: #f6f8fc;
+  --pactra-surface-3: #eaeff7;
+  --pactra-line: #dde3ed;
+  --pactra-line-strong: #c2cbdb;
+
+  --pactra-ink: #0c1220;
+  --pactra-ink-2: #3a4658;
+  --pactra-ink-3: #5c6b80;
+  --pactra-ink-4: #7d8b9f;
+
+  --pactra-accent: #1f5fe0;
+  --pactra-accent-2: #6d3fe0;
+  --pactra-accent-dim: #e6edfd;
+
+  --pactra-secure: #04785a;
+  --pactra-advisory: #9a5b04;
+  --pactra-critical: #c02231;
+  --pactra-taint: #6b2ecb;
+  --pactra-neutral: #55637a;
+
+  --pactra-scrim: rgb(12 18 32 / 0.42);
+  --pactra-shadow-panel: 0 1px 0 0 rgb(255 255 255 / 0.7) inset,
+    0 10px 28px -22px rgb(12 18 32 / 0.35);
+  --pactra-shadow-raised: 0 1px 0 0 rgb(255 255 255 / 0.9) inset;
+  --pactra-field: radial-gradient(900px 520px at 12% -10%, rgb(31 95 224 / 0.07), transparent 62%),
+    radial-gradient(760px 430px at 92% -2%, rgb(4 120 90 / 0.05), transparent 60%);
+}
+
+/* ----------------------------------------------------------------- DARK -- */
+/*
+ * The inverse. Applied by an explicit `data-theme="dark"` on <html>, which the
+ * blocking script in the document head stamps before first paint from either a
+ * stored choice or the OS preference — so there is exactly ONE dark palette
+ * here rather than a `prefers-color-scheme` copy that could drift from it.
+ */
+:root[data-theme="dark"] {
   color-scheme: dark;
+
+  --pactra-ground: #06080c;
+  --pactra-surface: #0b0f16;
+  --pactra-surface-2: #10151e;
+  --pactra-surface-3: #161d28;
+  --pactra-line: #1e2733;
+  --pactra-line-strong: #2b3646;
+
+  --pactra-ink: #e9eef6;
+  --pactra-ink-2: #a6b2c4;
+  --pactra-ink-3: #6f7d92;
+  --pactra-ink-4: #4b586b;
+
+  --pactra-accent: #4f8dfd;
+  --pactra-accent-2: #a986ff;
+  --pactra-accent-dim: #12233f;
+
+  --pactra-secure: #2fd4a7;
+  --pactra-advisory: #f2a93b;
+  --pactra-critical: #ff5f6d;
+  --pactra-taint: #a986ff;
+  --pactra-neutral: #7b8aa0;
+
+  --pactra-scrim: rgb(0 0 0 / 0.62);
+  --pactra-shadow-panel: 0 1px 0 0 rgb(255 255 255 / 0.02) inset,
+    0 18px 36px -28px rgb(0 0 0 / 0.9);
+  --pactra-shadow-raised: 0 1px 0 0 rgb(255 255 255 / 0.04) inset;
+  --pactra-field: radial-gradient(900px 500px at 12% -8%, rgb(79 141 253 / 0.07), transparent 62%),
+    radial-gradient(760px 420px at 92% 0%, rgb(47 212 167 / 0.045), transparent 60%);
 }
 
 html,
@@ -62,16 +147,21 @@ body {
 }
 
 body {
-  /* A single, static field gradient. Not an animated background: motion behind
-     dense tabular data is noise, and this surface is read, not watched. */
-  background-image:
-    radial-gradient(900px 500px at 12% -8%, rgba(79, 141, 253, 0.07), transparent 62%),
-    radial-gradient(760px 420px at 92% 0%, rgba(47, 212, 167, 0.045), transparent 60%);
+  /* A single, STATIC field. Not an animated background: motion behind dense
+     tabular data is noise, and this surface is read, not watched. */
+  background-image: var(--pactra-field);
   background-attachment: fixed;
 }
 
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.011em;
+}
+
 ::selection {
-  background: rgba(79, 141, 253, 0.28);
+  background: color-mix(in srgb, var(--color-accent) 26%, transparent);
 }
 
 /* Focus is always visible. A security console navigated by keyboard must never
@@ -99,9 +189,18 @@ body {
 }
 
 @utility panel {
-  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface) 100%);
+  background: var(--color-surface);
   border: 1px solid var(--color-line);
   border-radius: 10px;
+  box-shadow: var(--pactra-shadow-panel);
+}
+
+@utility raised {
+  box-shadow: var(--pactra-shadow-raised);
+}
+
+@utility scrim {
+  background: var(--pactra-scrim);
 }
 
 @utility hairline {
@@ -121,9 +220,31 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Every animation in this app is decorative reinforcement of something already
-   stated in text. Under reduced-motion they are removed outright rather than
-   merely shortened. */
+@utility display {
+  font-family: var(--font-display);
+  letter-spacing: -0.012em;
+}
+
+/* The whole gradient budget, spent here. Anything not on this list is flat. */
+@utility gradient-authority {
+  background-image: linear-gradient(
+    135deg,
+    var(--color-accent) 0%,
+    var(--color-accent-2) 100%
+  );
+}
+
+@utility gradient-path {
+  background-image: linear-gradient(
+    180deg,
+    var(--color-accent) 0%,
+    var(--color-accent-2) 100%
+  );
+}
+
+/* Every animation in this app reinforces something already stated in text.
+   Under reduced-motion they are removed outright rather than merely shortened;
+   Framer Motion is configured with `reducedMotion="user"` for the same reason. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

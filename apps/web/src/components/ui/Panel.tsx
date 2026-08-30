@@ -21,8 +21,10 @@ export function Panel({ children, className, title, subtitle, actions, flush, id
       id={id}
       aria-labelledby={title ? headingId : undefined}
       className={cn(
-        "panel overflow-hidden bg-[color:var(--color-surface)]",
-        "shadow-[0_1px_0_0_rgba(255,255,255,0.02)_inset,0_18px_36px_-28px_rgba(0,0,0,0.9)]",
+        // `panel` already carries the themed border, radius and shadow. A
+        // hardcoded shadow here would be the one place the dark palette leaked
+        // into a component.
+        "panel overflow-hidden",
         className,
       )}
     >
