@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+/*
+ * PACTRA console design tokens.
+ *
+ * Dark-first and committed to it: this is a security-operations surface, and a
+ * light variant would be a second palette to keep semantically honest for no
+ * operational gain. The `color-scheme` is pinned so form controls and
+ * scrollbars follow.
+ *
+ * COLOUR SEMANTICS — the one rule that matters here:
+ *
+ *   `secure`   an attack was REFUSED, a chain VERIFIED, a control HELD.
+ *              A blocked attack is a SUCCESS for PACTRA, so it is never red.
+ *   `critical` the SEVERITY of a hostile scenario, or a genuine failure.
+ *   `advisory` approval required, risk advice, an uncertain payment.
+ *   `taint`    untrusted / merchant-controlled data.
+ *   `accent`   navigational and structural emphasis only. Never a verdict.
+ *
+ * Severity is rendered OUTLINED; a result is rendered SOLID. That is what keeps
+ * "SEVERITY: CRITICAL" from reading as "RESULT: FAILED" at a glance.
+ */
+
+@theme {
+  --color-ground: #06080c;
+  --color-surface: #0b0f16;
+  --color-surface-2: #10151e;
+  --color-surface-3: #161d28;
+  --color-line: #1e2733;
+  --color-line-strong: #2b3646;
+
+  --color-ink: #e9eef6;
+  --color-ink-2: #a6b2c4;
+  --color-ink-3: #6f7d92;
+  --color-ink-4: #4b586b;
+
+  --color-accent: #4f8dfd;
+  --color-accent-dim: #12233f;
+
+  --color-secure: #2fd4a7;
+  --color-advisory: #f2a93b;
+  --color-critical: #ff5f6d;
+  --color-taint: #a986ff;
+  --color-neutral: #7b8aa0;
+
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo,
+    Consolas, "Liberation Mono", monospace;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  /* A single, static field gradient. Not an animated background: motion behind
+     dense tabular data is noise, and this surface is read, not watched. */
+  background-image:
+    radial-gradient(900px 500px at 12% -8%, rgba(79, 141, 253, 0.07), transparent 62%),
+    radial-gradient(760px 420px at 92% 0%, rgba(47, 212, 167, 0.045), transparent 60%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(79, 141, 253, 0.28);
+}
+
+/* Focus is always visible. A security console navigated by keyboard must never
+   lose the caret, so the ring is defined once and never removed per-component. */
+:where(a, button, [role="button"], [role="tab"], input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Scrollbars: present, quiet, and never overlaying content. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+@utility panel {
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface) 100%);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+}
+
+@utility hairline {
+  border-color: var(--color-line);
+}
+
+@utility label-xs {
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Every animation in this app is decorative reinforcement of something already
+   stated in text. Under reduced-motion they are removed outright rather than
+   merely shortened. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes pactra-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+@keyframes pactra-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pactra-shimmer {
+  0% {
+    background-position: -420px 0;
+  }
+  100% {
+    background-position: 420px 0;
+  }
+}
