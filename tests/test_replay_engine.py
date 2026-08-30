@@ -252,6 +252,34 @@ async def test_empty_event_stream_projects_an_empty_mission(session):
     assert projection.mission_state is None
 
 
+async def test_pre_c1_payment_transition_without_reason_key_preserves_prior_value(session):
+    """Historical payloads omitted null instead of recording an explicit clear."""
+    mission = await _mission(session)
+    await append_event(
+        session,
+        mission_id=mission.id,
+        event_type=EventType.PAYMENT_FAILED,
+        actor="payment-executor",
+        payload={
+            "payment_intent_id": str(uuid.uuid4()),
+            "state": "FAILED_RETRYABLE",
+            "reason_code": "PROVIDER_TRANSIENT_FAILURE",
+        },
+    )
+    await append_event(
+        session,
+        mission_id=mission.id,
+        event_type=EventType.PAYMENT_SUCCEEDED,
+        actor="payment-executor",
+        payload={"state": "SUCCEEDED"},
+    )
+
+    projection = reduce_events(mission.id, await list_events(session, mission.id))
+
+    assert projection.payment.state == "SUCCEEDED"
+    assert projection.payment.last_reason_code == "PROVIDER_TRANSIENT_FAILURE"
+
+
 # --------------------------------------------------------------------------- #
 # The integrity gate
 # --------------------------------------------------------------------------- #

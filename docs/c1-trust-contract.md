@@ -80,10 +80,42 @@ authentication.
 
 `SELECTED OFFER VERSION MUST MATCH BIND-TIME AUTHORITATIVE OFFER VERSION.`
 
-The stable refusal is `BIND_REFUSED_OFFER_CHANGED`; its dotted invariant ID is
-`binding.selected_offer_version_matches_authoritative_record`. A missing or
-changed selected record produces no authorization. Amount, product/version,
+The stable refusal is `BIND_REFUSED_OFFER_CHANGED`. It is ONE reason code over
+several dotted invariant IDs, because every way the authoritative row can stop
+being the row the selector chose is the same fact to a caller — no authorization
+exists:
+
+| Invariant ID | Refused when |
+| --- | --- |
+| `binding.selected_offer_version_matches_authoritative_record` | the record is absent, its content drifted, or its stored version is stale |
+| `binding.offer_is_valid` | ranking rejected the record between selection and bind |
+
+Callers branch on `reason_code`; `invariant_id` names the precise rule for
+operators and audit without widening that contract. Amount, product/version,
 and authenticated-merchant changes are covered.
+
+`offered_at` is normalized to UTC at ingress, before the fingerprint is computed
+and before the row is written. The same instant expressed at a different UTC
+offset is therefore one offer version, not two, and an unchanged offer is never
+refused as drift for a timezone reason alone. A naive timestamp is deliberately
+NOT normalized: it names no instant, so it stays naive and the canonical encoder
+fails it closed rather than inventing an offset for it.
+
+#### Refusal is durable and is an answer, not a crash
+
+`POST /api/v1/missions` answers a bind refusal with **HTTP 409** and the body:
+
+```json
+{"detail": {"reason_code": "BIND_REFUSED_OFFER_CHANGED", "invariant_id": "..."}}
+```
+
+The mission and its bind-refused `SECURITY_VIOLATION` are COMMITTED before that
+409 is raised. Evidence of a refusal must outlive the error response; rolling it
+back would erase the only record that the refusal happened and leave replay
+showing a mission that stopped for no stated reason. Committing is safe because
+the refusal is fail-closed: the request performed no privileged mutation, so
+what becomes durable is the mission up to `POLICY_CHECKED` plus its audit trail
+— no authorization, no payment intent, no outbox row.
 
 ## Transaction and routing binding
 
@@ -285,6 +317,25 @@ expiry/revocation/replay/binding refusals. EXECUTE covers durable PaymentIntent,
 outbox/provider dispatch, reconciliation, result, and webhook events. A
 bind-refused `SECURITY_VIOLATION` carries `bind_refused: true` and is classified
 as BIND; other security violations remain ADMIT.
+
+### Payment `reason_code`: presence, not truthiness
+
+A payment transition event states the reason as of that transition, and the key
+is written even when the reason is null. Replay therefore reads PRESENCE:
+
+| Payload | Replay does | Because |
+| --- | --- | --- |
+| `"reason_code": "PROVIDER_TRANSIENT_FAILURE"` | sets that reason | the transition recorded one |
+| `"reason_code": null` | CLEARS the reason | the transition cleared it on the intent row |
+| key absent | keeps the previous value | the event says nothing about the reason |
+
+Without the explicit null, "no reason any more" would be indistinguishable from
+"this event is silent about the reason", and a payment that failed retryably and
+then succeeded would replay as still carrying the failure while the live intent
+row showed none — a projection disagreeing with the state it reconstructs.
+
+Pre-C1 payloads omitted the key rather than recording a clear. They keep
+replaying under the absent-key rule, so historical missions are unaffected.
 
 ## Risk decision: Option A
 

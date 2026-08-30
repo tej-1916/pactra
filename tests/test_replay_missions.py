@@ -325,12 +325,26 @@ async def test_replay_reconstructs_a_transient_retry_history(sessionmaker):
 
     async with sessionmaker() as reader:
         result = await _trusted_replay(reader, mission_id)
+        intent = (
+            await reader.execute(
+                select(PaymentIntentRow).where(PaymentIntentRow.mission_id == mission_id)
+            )
+        ).scalar_one()
+        events = await list_events(reader, mission_id)
     state = result.state
     assert state.payment.retries_scheduled >= 1
     assert state.payment.attempts >= 2
+    assert intent.state == PaymentIntentState.SUCCEEDED.value
+    assert intent.last_reason_code is None
     assert state.payment.state == PaymentIntentState.SUCCEEDED.value
+    assert state.payment.last_reason_code is None
     assert state.mission_state == MissionState.PAYMENT_SUCCEEDED.value
+    assert result.trusted is True
     assert result.comparison.payment_matches is True
+    succeeded = [event for event in events if event.event_type == EventType.PAYMENT_SUCCEEDED.value]
+    assert len(succeeded) == 1
+    assert "reason_code" in succeeded[0].payload
+    assert succeeded[0].payload["reason_code"] is None
 
 
 async def test_replay_reconstructs_a_terminal_payment_failure(sessionmaker):

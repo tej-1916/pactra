@@ -360,9 +360,14 @@ def _common_payment_fields(state: _ReplayState, event: AuditEventRow) -> None:
     payment.amount_inr = _opt_int(event, "amount_inr") or payment.amount_inr
     payment.currency = _opt_str(event, "currency") or payment.currency
     payment.merchant_id = _opt_str(event, "merchant_id") or payment.merchant_id
-    reason_code = _opt_str(event, "reason_code")
-    if reason_code is not None:
-        payment.last_reason_code = reason_code
+    # PRESENCE, not truthiness, decides here. An event that carries the key —
+    # even as an explicit null — is stating the reason as of that transition, so
+    # a success that cleared a prior retryable failure clears it in the
+    # projection too. An event that omits the key entirely is saying nothing
+    # about the reason, so the previous value stands; pre-C1 payloads omitted
+    # the key instead of recording a clear, and must keep replaying that way.
+    if "reason_code" in event.payload:
+        payment.last_reason_code = _opt_str(event, "reason_code")
 
 
 def _record_security(state: _ReplayState, event: AuditEventRow) -> None:

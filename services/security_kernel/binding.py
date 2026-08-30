@@ -36,23 +36,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # never yields a bound transaction: NO VALID AUTHORIZATION -> NO PAYMENT.
 AUTHORIZABLE_OUTCOMES = frozenset({PolicyOutcome.ALLOW, PolicyOutcome.REQUIRE_APPROVAL})
 
-# Stable invariant carried by the bind-time refusal. Unlike the reason code,
-# which says what a caller may branch on, this identifies the exact internal
+# Stable invariants carried by a bind-time refusal. Unlike the reason code,
+# which says what a caller may branch on, these identify the exact internal
 # rule that failed.
 OFFER_VERSION_INVARIANT = "binding.selected_offer_version_matches_authoritative_record"
+OFFER_VALID_INVARIANT = "binding.offer_is_valid"
 
 
 class BindRefusedOfferChanged(Exception):
-    """The selected offer no longer matches the bind-time structured record."""
+    """The selected offer no longer matches the bind-time structured record.
+
+    One reason code, several invariants. Everything that can change about the
+    authoritative offer row between selection and bind — it vanished, its
+    content drifted, or ranking rejected it — is the same fact to a caller: the
+    offer it chose is not the offer the server would bind, so no authorization
+    exists. Branching logic reads ``reason_code``; ``invariant_id`` names the
+    precise rule for operators and audit without widening that contract.
+    """
 
     reason_code = ReasonCode.BIND_REFUSED_OFFER_CHANGED.value
-    invariant_id = OFFER_VERSION_INVARIANT
 
-    def __init__(self, *, mission_id: uuid.UUID, offer_id: uuid.UUID, detail: str) -> None:
+    def __init__(
+        self,
+        *,
+        mission_id: uuid.UUID,
+        offer_id: uuid.UUID,
+        detail: str,
+        invariant_id: str = OFFER_VERSION_INVARIANT,
+    ) -> None:
         super().__init__(f"{self.reason_code}: {detail}")
         self.mission_id = mission_id
         self.offer_id = offer_id
         self.detail = detail
+        self.invariant_id = invariant_id
 
 
 def _build_bound_transaction_from_values(
@@ -77,7 +93,7 @@ def _build_bound_transaction_from_values(
     )
     require(
         offer_valid,
-        "binding.offer_is_valid",
+        OFFER_VALID_INVARIANT,
         f"offer {offer_id} was rejected and cannot be bound",
     )
     require(
@@ -191,6 +207,18 @@ async def build_bound_transaction_from_selected_offer(
             mission_id=mission_id,
             offer_id=candidate.offer_id,
             detail="selected offer version does not match the bind-time offer record",
+        )
+
+    if not row.valid:
+        # Ranking rejected this offer after the selector saw it. Reached only by
+        # a genuine race against the authoritative row, so it is a bind-time
+        # refusal like any other drift — not the programming error that the
+        # shared builder's `require` guards against on the in-memory path.
+        raise BindRefusedOfferChanged(
+            mission_id=mission_id,
+            offer_id=candidate.offer_id,
+            detail="the selected offer was rejected before bind time",
+            invariant_id=OFFER_VALID_INVARIANT,
         )
 
     return _build_bound_transaction_from_values(

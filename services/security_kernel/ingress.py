@@ -20,6 +20,7 @@ so untrusted input can never manufacture USER_POLICY authority.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, TypeVar
 
 from packages.schemas.domain import MissionConstraints, RawMerchantOffer
@@ -47,6 +48,24 @@ PROTECTED_POLICY_FIELDS = (
     "blocked_merchants",
     "min_merchant_trust",
 )
+
+
+def _normalized_instant(value: datetime) -> datetime:
+    """Collapse an offset-aware merchant timestamp to the UTC instant it names.
+
+    The same instant may arrive as `17:30+05:30` or `12:00Z`. Both must produce
+    one offer fingerprint and one stored value, because the bind-time recompute
+    reads the row back through `as_utc` and would otherwise refuse a perfectly
+    unchanged offer. Normalizing here, at the trust boundary, keeps the
+    selection-time and bind-time views of `offered_at` identical.
+
+    A NAIVE datetime is deliberately left alone: it names no instant, and
+    attaching UTC to it here would silently invent one. It stays naive so the
+    canonical encoder still fails it closed at fingerprint time.
+    """
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value
+    return value.astimezone(timezone.utc)
 
 
 def ingest_merchant_offer(raw: RawMerchantOffer, context: MerchantContext) -> ProvenancedOffer:
@@ -83,7 +102,7 @@ def ingest_merchant_offer(raw: RawMerchantOffer, context: MerchantContext) -> Pr
         currency=untrusted(raw.currency.upper(), source),
         rating=untrusted(raw.rating, source),
         in_stock=untrusted(raw.in_stock, source),
-        offered_at=untrusted(raw.offered_at, source),
+        offered_at=untrusted(_normalized_instant(raw.offered_at), source),
     )
 
 

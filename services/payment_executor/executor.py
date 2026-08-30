@@ -136,12 +136,25 @@ async def apply_payment_transition(
     intent.state = target.value
     intent.last_reason_code = reason_code
     await session.flush()
-    event_payload = {"payment_intent_id": str(intent.id), "state": target.value, **payload}
-    if reason_code is not None:
-        # The durable state already records this code. Carry the same value into
-        # the source audit event so a Decision Trace can explain the transition
-        # without consulting mutable live rows or inventing a reason later.
-        event_payload["reason_code"] = reason_code
+    # The durable state already records this code. Carry the same value into the
+    # source audit event so a Decision Trace can explain the transition without
+    # consulting mutable live rows or inventing a reason later.
+    #
+    # The key is written even when the code is None, because this transition
+    # CLEARED the reason on the intent row and replay has to be able to see
+    # that. Omitting it would make "no reason any more" indistinguishable from
+    # "this event says nothing about the reason", and a mission that failed
+    # retryably and then succeeded would replay as still carrying the failure.
+    #
+    # Written LAST so the argument wins over any `reason_code` a caller also put
+    # in `payload`: the event must state the same reason the intent row records,
+    # and the argument is what was written there.
+    event_payload = {
+        "payment_intent_id": str(intent.id),
+        "state": target.value,
+        **payload,
+        "reason_code": reason_code,
+    }
     await append_event(
         session,
         mission_id=intent.mission_id,

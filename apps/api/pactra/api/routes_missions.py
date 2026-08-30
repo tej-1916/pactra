@@ -27,6 +27,7 @@ from services.security_kernel.authorization import (
     authorization_for_mission,
     rebuild_bound_transaction,
 )
+from services.security_kernel.binding import BindRefusedOfferChanged
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -145,7 +146,28 @@ async def _mission_out(session: AsyncSession, mission: Mission) -> MissionOut:
 async def create_mission(
     request: CreateMissionRequest, session: AsyncSession = Depends(get_session)
 ) -> MissionOut:
-    mission = await Orchestrator().run(session, request)
+    try:
+        mission = await Orchestrator().run(session, request)
+    except BindRefusedOfferChanged as refusal:
+        # A refusal is an ANSWER, not a crash: the server declined to mint
+        # authority because the selected offer is not the offer it would bind.
+        # The kernel already appended the bind-refused SECURITY_VIOLATION, and
+        # that evidence must outlive the HTTP error — otherwise the dependency's
+        # rollback would erase the only record that the refusal happened, and
+        # replay would show a mission that simply stopped for no reason.
+        #
+        # Committing here is safe precisely because the refusal is fail-closed:
+        # the request performed no privileged mutation. No authorization was
+        # issued, no payment intent created, no outbox row queued. What becomes
+        # durable is the mission up to POLICY_CHECKED plus its audit trail.
+        await session.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason_code": refusal.reason_code,
+                "invariant_id": refusal.invariant_id,
+            },
+        ) from refusal
     # SUCCESS_RESPONSE_IMPLIES_DURABLE_COMMIT. The whole mission — its offers,
     # policy decision, authorization and audit events — becomes durable in one
     # commit here, before the response body is built, so a caller that reads
