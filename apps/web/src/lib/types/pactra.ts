@@ -83,6 +83,15 @@ export interface Authorization {
   binding_version: string;
   policy_version: string;
   offer_version: string;
+  /**
+   * How this authorization became active. `POLICY_AUTO` is a deterministic
+   * ALLOW and is NEVER human approval. `USER_ED25519` carries a proof from the
+   * pre-enrolled demo signing key. `LEGACY_SERVER` is migration-only and fails
+   * closed for payment. Rendering must keep these three distinct.
+   */
+  approval_scheme: ApprovalScheme;
+  /** Present only once a `USER_ED25519` proof has been accepted. */
+  signing_key_id: string | null;
   issued_at: string;
   expires_at: string;
   consumed_at: string | null;
@@ -91,6 +100,43 @@ export interface Authorization {
   bound_quantity: number;
   bound_amount_inr: number;
   bound_currency: string;
+}
+
+/** `packages/schemas/approval.py :: ApprovalScheme` */
+export type ApprovalScheme = "POLICY_AUTO" | "USER_ED25519" | "LEGACY_SERVER";
+
+/** `apps/api/pactra/schemas_api.py :: BoundTransactionSummary` */
+export interface BoundTransactionSummary {
+  merchant: string;
+  product: string;
+  quantity: number;
+  amount: number;
+  currency: string;
+  expiry: string;
+}
+
+/**
+ * `apps/api/pactra/schemas_api.py :: ApprovalChallengeOut`
+ *
+ * What the EXTERNAL signer signs. `approval_message_hex` is the canonical
+ * message the server rebuilt from durable state — the console displays it and
+ * never signs it, because the demo signing key lives outside PACTRA entirely.
+ */
+export interface ApprovalChallenge {
+  authorization_id: string;
+  mission_id: string;
+  binding_version: string;
+  transaction_digest: string;
+  signing_key_id: string;
+  approval_scheme: ApprovalScheme;
+  approval_message_hex: string;
+  transaction: BoundTransactionSummary;
+}
+
+/** `apps/api/pactra/schemas_api.py :: ApprovalRequest` */
+export interface ApprovalSubmission {
+  signing_key_id: string;
+  signature: string;
 }
 
 /** `apps/api/pactra/schemas_api.py :: PaymentIntentOut` */

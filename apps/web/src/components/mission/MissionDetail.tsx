@@ -11,6 +11,7 @@ import { MissionPipeline, type PipelineStage } from "@/components/mission/Missio
 import { OffersTable } from "@/components/mission/OffersTable";
 import { PaymentPanel } from "@/components/mission/PaymentPanel";
 import { ProvenanceView } from "@/components/mission/ProvenanceView";
+import { SignedApprovalPanel } from "@/components/mission/SignedApprovalPanel";
 import { RiskAssessmentView } from "@/components/risk/RiskAssessmentView";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -26,6 +27,8 @@ import type { ApiResult } from "@/lib/api/result";
 import { inr, shortId, timestamp } from "@/lib/format";
 import { newIdempotencyKey, readRegister } from "@/lib/hooks/useMissionRegister";
 import type {
+  ApprovalChallenge,
+  ApprovalSubmission,
   AuditEvent,
   AuditVerification,
   Authorization,
@@ -66,6 +69,7 @@ export function MissionDetail({ missionId }: { missionId: string }) {
   const [tab, setTab] = useState("overview");
   const [mission, setMission] = useState<Load<Mission>>(LOADING);
   const [authorization, setAuthorization] = useState<Load<Authorization>>(LOADING);
+  const [challenge, setChallenge] = useState<Load<ApprovalChallenge>>(LOADING);
   const [payment, setPayment] = useState<Load<PaymentIntent>>(LOADING);
   const [events, setEvents] = useState<Load<AuditEvent[]>>(LOADING);
   const [verification, setVerification] = useState<Load<AuditVerification>>(LOADING);
@@ -87,9 +91,13 @@ export function MissionDetail({ missionId }: { missionId: string }) {
    * data with a skeleton for no gain. A failed read replaces its own panel.
    */
   const refresh = useCallback(async () => {
-    const [m, a, p, e, v, r, k] = await Promise.all([
+    const [m, a, c, p, e, v, r, k] = await Promise.all([
       api.getMission(missionId),
       api.getAuthorization(missionId),
+      // A pure read. The kernel answers 409 whenever no USER_ED25519 proof is
+      // wanted, which `pick` turns into "no challenge" rather than an error —
+      // the POLICY_AUTO path is not a failure to have nothing to sign.
+      api.getApprovalChallenge(missionId),
       api.getPayment(missionId),
       api.getEvents(missionId),
       api.verifyAudit(missionId),
@@ -98,6 +106,7 @@ export function MissionDetail({ missionId }: { missionId: string }) {
     ]);
     setMission({ status: "done", result: m });
     setAuthorization({ status: "done", result: a });
+    setChallenge({ status: "done", result: c });
     setPayment({ status: "done", result: p });
     setEvents({ status: "done", result: e });
     setVerification({ status: "done", result: v });
@@ -112,10 +121,10 @@ export function MissionDetail({ missionId }: { missionId: string }) {
     void refresh();
   }, [refresh]);
 
-  async function approve() {
+  async function approve(submission: ApprovalSubmission) {
     setApproving(true);
     setActionError(null);
-    const result = await api.approve(missionId);
+    const result = await api.approve(missionId, submission);
     setApproving(false);
     if (result.kind === "ok") {
       await refresh();
@@ -168,6 +177,7 @@ export function MissionDetail({ missionId }: { missionId: string }) {
   const decision = data.policy_decision;
   const selectedOffer = data.offers.find((offer) => offer.offer_id === decision?.selected_offer_id);
   const auth = pick(authorization);
+  const approvalChallenge = pick(challenge);
   const pay = pick(payment);
   const riskAssessment = pick(risk);
 
@@ -326,18 +336,24 @@ export function MissionDetail({ missionId }: { missionId: string }) {
       </TabPanel>
 
       <TabPanel id="authorization" active={tab}>
-        {auth ? (
-          <AuthorizationPanel
-            authorization={auth}
-            onApprove={approve}
-            approving={approving}
-            canApprove={auth.status === "PENDING" && data.state === "AWAITING_APPROVAL"}
-          />
-        ) : (
-          <Panel title="Authorization artifact">
-            <StateFor load={authorization} noun="authorization" />
-          </Panel>
-        )}
+        <div className="space-y-5">
+          {auth ? (
+            <AuthorizationPanel authorization={auth} />
+          ) : (
+            <Panel title="Authorization artifact">
+              <StateFor load={authorization} noun="authorization" />
+            </Panel>
+          )}
+          {approvalChallenge &&
+          auth?.status === "PENDING" &&
+          data.state === "AWAITING_APPROVAL" ? (
+            <SignedApprovalPanel
+              challenge={approvalChallenge}
+              onApprove={approve}
+              approving={approving}
+            />
+          ) : null}
+        </div>
       </TabPanel>
 
       <TabPanel id="payment" active={tab}>

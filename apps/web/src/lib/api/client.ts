@@ -3,6 +3,8 @@
 import type { ApiResult } from "./result";
 import { parseErrorBody } from "./result";
 import type {
+  ApprovalChallenge,
+  ApprovalSubmission,
   Authorization,
   AuditEvent,
   AuditVerification,
@@ -78,8 +80,28 @@ export const api = {
 
   getAuthorization: (id: string) => call<Authorization>(`/api/pactra/missions/${id}/authorization`),
 
-  approve: (id: string) =>
-    call<Authorization>(`/api/pactra/missions/${id}/authorization`, { method: "POST" }),
+  /**
+   * The canonical message the EXTERNAL signer must sign.
+   *
+   * Fetched rather than constructed: the bytes commit to the server-held nonce
+   * through `transaction_digest`, so the console could not rebuild them even if
+   * it were supposed to.
+   */
+  getApprovalChallenge: (id: string) =>
+    call<ApprovalChallenge>(`/api/pactra/missions/${id}/authorization/challenge`),
+
+  /**
+   * Submit a proof made elsewhere.
+   *
+   * The console never signs. It carries `{signing_key_id, signature}` produced
+   * by the external signer to the kernel, which verifies before it activates.
+   */
+  approve: (id: string, submission: ApprovalSubmission) =>
+    call<Authorization>(`/api/pactra/missions/${id}/authorization`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(submission),
+    }),
 
   getPayment: (id: string) => call<PaymentIntent>(`/api/pactra/missions/${id}/payment`),
 
