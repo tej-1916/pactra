@@ -8,6 +8,8 @@ import { RecentMissions } from "@/components/command/RecentMissions";
 import { SecuritySummary } from "@/components/command/SecuritySummary";
 import { AuthorityClaim, StagePipeline } from "@/components/command/StagePipeline";
 import { SystemStatus } from "@/components/command/SystemStatus";
+import { Hero } from "@/components/hero/Hero";
+import { DarkProductSection } from "@/components/hero/DarkProductSection";
 import { Badge } from "@/components/ui/Badge";
 import { DataTierBadge } from "@/components/ui/DataTier";
 import { InvariantCard } from "@/components/ui/InvariantCard";
@@ -20,25 +22,19 @@ import { headlineInvariants, PROTOCOL_SUPPORT } from "@/lib/reference";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Overview.
- *
- * The first thing it establishes is the system's shape — ADMIT → BIND →
- * EXECUTE — because every other surface on this console is organised by those
- * three stages, including the Decision Trace.
- *
- * Three data tiers appear on this page and each one is labelled where it lands:
- * the invariant contract is GENERATED from source, the posture metrics are a
- * LAST VERIFIED DEVELOPMENT BENCHMARK, and system status is LIVE. Nothing on
- * this page is a number typed into a component.
- */
 export default async function OverviewPage() {
   const [attack, risk] = await Promise.all([loadAttackReport(), loadRiskEvaluation()]);
   const invariants = headlineInvariants();
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-8">
+      {/* Step 3 & 4: Deep Indigo Visual Foundation + Hero + Signature Trust Graph */}
+      <Hero />
+
       <PostureBanner />
+
+      {/* Step 12: High-Impact Dark-Indigo Product Visualization Region */}
+      <DarkProductSection />
 
       <Panel
         title="ADMIT → BIND → EXECUTE"

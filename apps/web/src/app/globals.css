@@ -38,19 +38,26 @@
   --color-line-strong: var(--pactra-line-strong);
 
   --color-ink: var(--pactra-ink);
-  --color-ink-2: var(--pactra-ink-2);
-  --color-ink-3: var(--pactra-ink-3);
-  --color-ink-4: var(--pactra-ink-4);
+  --color-ink-2: var(--pactra-ink-secondary);
+  --color-ink-3: var(--pactra-ink-muted);
+  --color-ink-4: var(--pactra-periwinkle-light);
 
-  --color-accent: var(--pactra-accent);
-  --color-accent-2: var(--pactra-accent-2);
-  --color-accent-dim: var(--pactra-accent-dim);
+  --color-indigo-deep: var(--pactra-indigo-deep);
+  --color-indigo-dark: var(--pactra-indigo-dark);
+  --color-indigo: var(--pactra-indigo);
+  --color-indigo-bright: var(--pactra-indigo-bright);
+  --color-periwinkle: var(--pactra-periwinkle);
+  --color-periwinkle-light: var(--pactra-periwinkle-light);
 
-  --color-secure: var(--pactra-secure);
-  --color-advisory: var(--pactra-advisory);
+  --color-accent: var(--pactra-indigo);
+  --color-accent-2: var(--pactra-indigo-bright);
+  --color-accent-dim: var(--pactra-surface-2);
+
+  --color-secure: var(--pactra-success);
+  --color-advisory: var(--pactra-warning);
   --color-critical: var(--pactra-critical);
-  --color-taint: var(--pactra-taint);
-  --color-neutral: var(--pactra-neutral);
+  --color-taint: var(--pactra-periwinkle);
+  --color-neutral: #5E58D2;
 
   /* Space Grotesk for display, Inter for text, IBM Plex Mono for machine
      values. Every one has a real fallback stack: a font that fails to load
@@ -68,74 +75,81 @@
 :root {
   color-scheme: light;
 
-  --pactra-ground: #f4f6fa;
-  --pactra-surface: #ffffff;
-  --pactra-surface-2: #f6f8fc;
-  --pactra-surface-3: #eaeff7;
-  --pactra-line: #dde3ed;
-  --pactra-line-strong: #c2cbdb;
+  --pactra-ground: #F7F7FC;
+  --pactra-surface: #FFFFFF;
+  --pactra-surface-2: #F0F2F8;
+  --pactra-surface-3: #E4E7F2;
 
-  --pactra-ink: #0c1220;
-  --pactra-ink-2: #3a4658;
-  --pactra-ink-3: #5c6b80;
-  --pactra-ink-4: #7d8b9f;
+  --pactra-line: #DDE1EA;
+  --pactra-line-strong: #C1C0F3;
 
-  --pactra-accent: #1f5fe0;
-  --pactra-accent-2: #6d3fe0;
-  --pactra-accent-dim: #e6edfd;
+  --pactra-ink: #12162F;
+  --pactra-ink-secondary: #28247A;
+  --pactra-ink-muted: #3A349A;
 
-  --pactra-secure: #04785a;
-  --pactra-advisory: #9a5b04;
-  --pactra-critical: #c02231;
-  --pactra-taint: #6b2ecb;
-  --pactra-neutral: #55637a;
+  --pactra-indigo-deep: #1E2160;
+  --pactra-indigo-dark: #28247A;
+  --pactra-indigo: #4B42B9;
+  --pactra-indigo-bright: #5E58D2;
 
-  --pactra-scrim: rgb(12 18 32 / 0.42);
-  --pactra-shadow-panel: 0 1px 0 0 rgb(255 255 255 / 0.7) inset,
-    0 10px 28px -22px rgb(12 18 32 / 0.35);
-  --pactra-shadow-raised: 0 1px 0 0 rgb(255 255 255 / 0.9) inset;
-  --pactra-field: radial-gradient(900px 520px at 12% -10%, rgb(31 95 224 / 0.07), transparent 62%),
-    radial-gradient(760px 430px at 92% -2%, rgb(4 120 90 / 0.05), transparent 60%);
+  --pactra-periwinkle: #7C78E2;
+  --pactra-periwinkle-light: #9D9BE7;
+
+  --pactra-success: #04785A;
+  --pactra-warning: #B7791F;
+  --pactra-critical: #C02231;
+
+  --pactra-field: radial-gradient(1000px 600px at 10% -10%, rgba(75, 66, 185, 0.07), transparent 65%),
+    radial-gradient(800px 500px at 90% -5%, rgba(124, 120, 226, 0.05), transparent 60%);
+  --pactra-glow: 0 0 20px rgba(124, 120, 226, 0.25);
+  --pactra-glass: rgba(255, 255, 255, 0.82);
+
+  --pactra-scrim: rgba(18, 22, 47, 0.42);
+  --pactra-shadow-panel: 0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
+    0 12px 32px -20px rgba(30, 33, 96, 0.12);
+  --pactra-shadow-raised: 0 1px 0 0 rgba(255, 255, 255, 0.9) inset;
 }
 
 /* ----------------------------------------------------------------- DARK -- */
 /*
- * The inverse. Applied by an explicit `data-theme="dark"` on <html>, which the
- * blocking script in the document head stamps before first paint from either a
- * stored choice or the OS preference — so there is exactly ONE dark palette
- * here rather than a `prefers-color-scheme` copy that could drift from it.
+ * The inverse. Applied by an explicit `data-theme="dark"` on <html>.
  */
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --pactra-ground: #06080c;
-  --pactra-surface: #0b0f16;
-  --pactra-surface-2: #10151e;
-  --pactra-surface-3: #161d28;
-  --pactra-line: #1e2733;
-  --pactra-line-strong: #2b3646;
+  --pactra-ground: #12162F;
+  --pactra-surface: #1E2160;
+  --pactra-surface-2: #28247A;
+  --pactra-surface-3: #3A349A;
 
-  --pactra-ink: #e9eef6;
-  --pactra-ink-2: #a6b2c4;
-  --pactra-ink-3: #6f7d92;
-  --pactra-ink-4: #4b586b;
+  --pactra-line: rgba(210, 211, 255, 0.16);
+  --pactra-line-strong: rgba(210, 211, 255, 0.3);
 
-  --pactra-accent: #4f8dfd;
-  --pactra-accent-2: #a986ff;
-  --pactra-accent-dim: #12233f;
+  --pactra-ink: #F7F7FF;
+  --pactra-ink-secondary: rgba(225, 226, 255, 0.85);
+  --pactra-ink-muted: rgba(225, 226, 255, 0.68);
 
-  --pactra-secure: #2fd4a7;
-  --pactra-advisory: #f2a93b;
-  --pactra-critical: #ff5f6d;
-  --pactra-taint: #a986ff;
-  --pactra-neutral: #7b8aa0;
+  --pactra-indigo-deep: #1E2160;
+  --pactra-indigo-dark: #28247A;
+  --pactra-indigo: #4B42B9;
+  --pactra-indigo-bright: #5E58D2;
 
-  --pactra-scrim: rgb(0 0 0 / 0.62);
-  --pactra-shadow-panel: 0 1px 0 0 rgb(255 255 255 / 0.02) inset,
-    0 18px 36px -28px rgb(0 0 0 / 0.9);
-  --pactra-shadow-raised: 0 1px 0 0 rgb(255 255 255 / 0.04) inset;
-  --pactra-field: radial-gradient(900px 500px at 12% -8%, rgb(79 141 253 / 0.07), transparent 62%),
-    radial-gradient(760px 420px at 92% 0%, rgb(47 212 167 / 0.045), transparent 60%);
+  --pactra-periwinkle: #7C78E2;
+  --pactra-periwinkle-light: #9D9BE7;
+
+  --pactra-success: #04785A;
+  --pactra-warning: #B7791F;
+  --pactra-critical: #C02231;
+
+  --pactra-field: radial-gradient(1000px 600px at 12% -10%, rgba(94, 88, 210, 0.18), transparent 65%),
+    radial-gradient(800px 500px at 88% -5%, rgba(124, 120, 226, 0.15), transparent 60%);
+  --pactra-glow: 0 0 24px rgba(124, 120, 226, 0.45);
+  --pactra-glass: rgba(30, 33, 96, 0.7);
+
+  --pactra-scrim: rgba(18, 22, 47, 0.75);
+  --pactra-shadow-panel: 0 1px 0 0 rgba(210, 211, 255, 0.08) inset,
+    0 18px 36px -28px rgba(0, 0, 0, 0.7);
+  --pactra-shadow-raised: 0 1px 0 0 rgba(210, 211, 255, 0.1) inset;
 }
 
 html,
@@ -225,21 +239,58 @@ h3 {
   letter-spacing: -0.012em;
 }
 
-/* The whole gradient budget, spent here. Anything not on this list is flat. */
 @utility gradient-authority {
   background-image: linear-gradient(
     135deg,
-    var(--color-accent) 0%,
-    var(--color-accent-2) 100%
+    var(--pactra-indigo) 0%,
+    var(--pactra-periwinkle) 100%
   );
 }
 
 @utility gradient-path {
   background-image: linear-gradient(
     180deg,
-    var(--color-accent) 0%,
-    var(--color-accent-2) 100%
+    var(--pactra-indigo-bright) 0%,
+    var(--pactra-periwinkle) 100%
   );
+}
+
+@utility gradient-headline {
+  background-image: linear-gradient(
+    135deg,
+    #4B42B9 0%,
+    #5E58D2 45%,
+    #9D9BE7 100%
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@utility gradient-dark-section {
+  background-image: linear-gradient(
+    180deg,
+    #12162F 0%,
+    #1E2160 30%,
+    #28247A 65%,
+    #3A349A 100%
+  );
+}
+
+@utility glass-panel {
+  background-color: var(--pactra-glass);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--pactra-line);
+}
+
+/* Infrastructure Dot Grid Backgrounds */
+.pactra-dot-grid-light {
+  background-image: radial-gradient(rgba(75, 66, 185, 0.14) 1.2px, transparent 1.2px);
+  background-size: 28px 28px;
+}
+
+.pactra-dot-grid-dark {
+  background-image: radial-gradient(rgba(193, 192, 243, 0.16) 1.2px, transparent 1.2px);
+  background-size: 28px 28px;
 }
 
 /* Every animation in this app reinforces something already stated in text.
@@ -282,5 +333,14 @@ h3 {
   }
   100% {
     background-position: 420px 0;
+  }
+}
+
+@keyframes pactra-pulse-subtle {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(124, 120, 226, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(124, 120, 226, 0.5);
   }
 }
