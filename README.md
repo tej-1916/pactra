@@ -9,6 +9,9 @@ autonomous AI agents and payment infrastructure. It is built for the hard case:
 transaction safety must hold **even when the reasoning layer, merchant input, or
 one participating agent is compromised**.
 
+The frozen C1 trust boundary, limitations, approval-display rules, and Decision
+Trace contract are documented in [`docs/c1-trust-contract.md`](docs/c1-trust-contract.md).
+
 ```text
 THE AI MAY FAIL.        MERCHANT INPUT MAY BE MALICIOUS.
 THE AI MAY HALLUCINATE. AN AGENT MAY BE COMPROMISED.
@@ -798,16 +801,12 @@ payment success, a lost-response timeout resolved by reconciliation, a transient
 retry, a terminal failure, a webhook-settled payment with a duplicate delivery,
 an idempotent retry, and an authority-escalation + identity-spoof attack.
 
-### What replay cannot reconstruct
+### Replay reason-code provenance
 
-`last_reason_code` is `None` after a terminal provider failure.
-`apply_payment_transition` writes `reason_code` to the `payment_intents` COLUMN
-but not into the audit payload, so `PROVIDER_TERMINAL_FAILURE` is not in the
-ledger. Replay leaves the field unknown rather than inferring it from the event
-type — inferring would be fabricating a value the events do not contain. A test
-asserts both halves (the column has it, the projection does not) so the gap
-cannot drift unnoticed. Reason codes that ARE written into payloads (the
-uncertainty and reconciliation paths) reconstruct normally.
+C1 writes a payment transition's stable `reason_code` into the same source
+audit event as the transition. Replay and Decision Trace copy that recorded
+value; they do not infer a reason from the event type or consult the mutable
+PaymentIntent row.
 
 ### Measured cost
 
@@ -1108,7 +1107,7 @@ structures with separate report sections.
 | id | limitation |
 |---|---|
 | KL-01 | Tail truncation and whole-chain deletion are undetectable without an external anchor. **Demonstrated** by `audit_tail_truncation`, and never counted as a blocked attack. |
-| KL-02 | A terminal provider failure's reason code is not in the ledger, so replay cannot reconstruct it. |
+| KL-02 | PACTRA does not prove semantic fidelity between natural-language intent and structured intent. |
 | KL-03 | Audit canonicalization is weaker than the transaction-digest encoder; historical hashes are preserved rather than rewritten. |
 | KL-04 | USER_ED25519 uses one demo key, not production user identity or a user/account credential system. |
 | KL-05 | Merchant identity is registration-based, not cryptographic. |

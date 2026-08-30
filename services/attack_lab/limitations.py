@@ -32,15 +32,14 @@ KNOWN_LIMITATIONS: tuple[KnownLimitation, ...] = (
         demonstrated_by="audit_tail_truncation",
     ),
     KnownLimitation(
-        id="KL-02-terminal-reason-code-not-replayable",
-        title="A terminal provider failure's reason code is not in the ledger",
+        id="KL-02-semantic-intent-infidelity",
+        title="Structured intent does not prove semantic intent fidelity",
         detail=(
-            "`apply_payment_transition` writes `reason_code` to the "
-            "`payment_intents` column but not into the audit payload, so "
-            "PROVIDER_TERMINAL_FAILURE cannot be reconstructed from event history. "
-            "Replay leaves `last_reason_code` as None rather than inferring it "
-            "from the event type, because inferring would fabricate a value the "
-            "events do not contain. The Attack Lab does not reconstruct it either."
+            "PACTRA validates typed intent and bounds the resulting authority, but "
+            "it does not prove that an AI or caller translated the user's natural-"
+            "language meaning perfectly. Hard limits, exact transaction binding, "
+            "and USER_ED25519 approval reduce consequences; they do not turn "
+            "semantic interpretation into a verified fact."
         ),
         demonstrated_by=None,
     ),

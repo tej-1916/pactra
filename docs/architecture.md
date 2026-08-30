@@ -599,15 +599,12 @@ view. Where neither side holds an authorization or a payment, the comparison
 reports `null` rather than `true` — claiming agreement about something that does
 not exist is an assertion with no content behind it.
 
-### What replay cannot reconstruct
+### Replay reason-code provenance
 
-`ReplayedPayment.last_reason_code` is `None` after a terminal provider failure.
-`apply_payment_transition` writes `reason_code` to the `payment_intents` COLUMN
-but not into the audit payload, so `PROVIDER_TERMINAL_FAILURE` is not in the
-ledger. Replay leaves the field unknown instead of inferring it from the event
-type — inferring would be fabricating a value the events do not contain. The gap
-is asserted by a test so it cannot drift unnoticed. Reason codes that ARE written
-into payloads (the uncertainty and reconciliation paths) reconstruct normally.
+C1 writes a payment transition's stable `reason_code` into the same source
+audit event as the transition. Replay and Decision Trace copy that recorded
+value; they do not infer a reason from the event type or consult the mutable
+PaymentIntent row.
 
 ## Adversarial Attack Lab (implemented, Phase 6)
 

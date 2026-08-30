@@ -19,6 +19,7 @@ than silently shrinking the binding.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -49,6 +50,21 @@ BOUND_FIELDS: tuple[str, ...] = (
 
 # A nonce is 32 bytes of CSPRNG entropy rendered as hex (64 characters).
 NONCE_HEX_LENGTH = 64
+
+
+class OfferCandidate(BaseModel):
+    """A selector may name an offer; it may not supply transaction authority.
+
+    This is the declassification input between selection and BIND. It carries
+    only the opaque identifier of a server-held structured offer. In
+    particular there is no amount, currency, merchant, product, policy, or
+    approval field that an agent/model could populate and have treated as
+    authoritative merely because it was valid JSON.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    offer_id: uuid.UUID
 
 
 class BoundTransaction(BaseModel):

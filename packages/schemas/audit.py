@@ -19,9 +19,89 @@ projection carries only values the ledger already exposes through
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from packages.schemas.approval import ApprovalScheme
+from packages.schemas.domain import EventType, PolicyOutcome
+from packages.schemas.payment import PaymentIntentState
+
+# --------------------------------------------------------------------------- #
+# C1 Decision Trace
+# --------------------------------------------------------------------------- #
+
+
+class DecisionStage(str, Enum):
+    """The three security stages PACTRA exposes to a trace consumer."""
+
+    ADMIT = "ADMIT"
+    BIND = "BIND"
+    EXECUTE = "EXECUTE"
+
+
+class DecisionTraceVerdict(str, Enum):
+    """What the source event established; never model reasoning."""
+
+    ACCEPTED = "ACCEPTED"
+    REFUSED = "REFUSED"
+    PENDING = "PENDING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    IGNORED = "IGNORED"
+    ADVISORY = "ADVISORY"
+
+
+class DecisionTraceNextAction(str, Enum):
+    """The next permitted workflow action after this recorded decision."""
+
+    CONTINUE_ADMIT = "CONTINUE_ADMIT"
+    CONTINUE_BIND = "CONTINUE_BIND"
+    AWAIT_USER_SIGNATURE = "AWAIT_USER_SIGNATURE"
+    CREATE_PAYMENT_INTENT = "CREATE_PAYMENT_INTENT"
+    DISPATCH_PAYMENT = "DISPATCH_PAYMENT"
+    AWAIT_PROVIDER = "AWAIT_PROVIDER"
+    RECONCILE_PAYMENT = "RECONCILE_PAYMENT"
+    RETRY_PAYMENT = "RETRY_PAYMENT"
+    NONE = "NONE"
+
+
+class DecisionTraceEvidenceRef(BaseModel):
+    """Reference to the verified audit event from which an entry was projected."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_id: uuid.UUID
+    sequence: int = Field(ge=0)
+    actor: str
+
+
+class DecisionTraceEntry(BaseModel):
+    """Allow-listed action/security projection of one hash-chained event.
+
+    Raw payloads are intentionally absent. In particular this model has no
+    signature, nonce, key material, free-form merchant content, provider
+    secret, or model-reasoning field.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stage: DecisionStage
+    event_type: EventType
+    verdict: DecisionTraceVerdict
+    reason_codes: list[str]
+    # Required-but-nullable: null means the source event recorded no dotted
+    # invariant identifier; the projection never fabricates one.
+    invariant_id: str | None
+    approval_scheme: ApprovalScheme | None
+    policy_outcome: PolicyOutcome | None
+    payment_state: PaymentIntentState | None
+    advisory: bool
+    next_action: DecisionTraceNextAction
+    evidence: DecisionTraceEvidenceRef
+    recorded_at: datetime
+
 
 # --------------------------------------------------------------------------- #
 # Verification
@@ -121,6 +201,7 @@ class ReplayedAuthorization(BaseModel):
     policy_version: str | None = None
     offer_version: str | None = None
     binding_version: str | None = None
+    approval_scheme: ApprovalScheme | None = None
     expires_at: str | None = None
     consumed_at: str | None = None
     bound_merchant_id: str | None = None
@@ -316,6 +397,9 @@ class MissionReplayResult(BaseModel):
     verification: AuditVerificationResult
     state: MissionProjection | None = None
     comparison: StateComparison | None = None
+    #: Ordered action/security projection of the same verified audit events.
+    #: Always an array; empty when no trusted projection can be produced.
+    decision_trace: list[DecisionTraceEntry]
     #: Sequence + type of any event this build could not interpret. Non-empty
     #: only alongside REPLAY_UNSUPPORTED_EVENT_TYPE / REPLAY_MALFORMED_EVENT.
     unsupported_events: list[dict] = Field(default_factory=list)

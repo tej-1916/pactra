@@ -21,16 +21,95 @@ digest recorded at approval time.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from packages.schemas.domain import PolicyDecision, PolicyOutcome
+from apps.api.db.models import Offer
+from packages.schemas.domain import PolicyDecision, PolicyOutcome, ReasonCode, as_utc
 from packages.schemas.invariants import InvariantViolation, require
 from packages.schemas.kernel import ProvenancedOffer
-from packages.schemas.transaction import BoundTransaction
+from packages.schemas.transaction import BoundTransaction, OfferCandidate, compute_offer_version
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Policy outcomes that may produce an authorization at all. A DENY decision
 # never yields a bound transaction: NO VALID AUTHORIZATION -> NO PAYMENT.
 AUTHORIZABLE_OUTCOMES = frozenset({PolicyOutcome.ALLOW, PolicyOutcome.REQUIRE_APPROVAL})
+
+# Stable invariant carried by the bind-time refusal. Unlike the reason code,
+# which says what a caller may branch on, this identifies the exact internal
+# rule that failed.
+OFFER_VERSION_INVARIANT = "binding.selected_offer_version_matches_authoritative_record"
+
+
+class BindRefusedOfferChanged(Exception):
+    """The selected offer no longer matches the bind-time structured record."""
+
+    reason_code = ReasonCode.BIND_REFUSED_OFFER_CHANGED.value
+    invariant_id = OFFER_VERSION_INVARIANT
+
+    def __init__(self, *, mission_id: uuid.UUID, offer_id: uuid.UUID, detail: str) -> None:
+        super().__init__(f"{self.reason_code}: {detail}")
+        self.mission_id = mission_id
+        self.offer_id = offer_id
+        self.detail = detail
+
+
+def _build_bound_transaction_from_values(
+    *,
+    offer_id: uuid.UUID,
+    offer_valid: bool,
+    merchant_id: str,
+    product_id: str,
+    unit_amount_inr: int,
+    currency: str,
+    offer_version: str,
+    decision: PolicyDecision,
+    quantity: int,
+    nonce: str,
+    expires_at: datetime,
+) -> BoundTransaction:
+    """Apply the common BIND invariants to provenance-coupled or stored data."""
+    require(
+        decision.decision in AUTHORIZABLE_OUTCOMES,
+        "binding.decision_is_authorizable",
+        f"cannot bind a transaction for a {decision.decision.value} decision",
+    )
+    require(
+        offer_valid,
+        "binding.offer_is_valid",
+        f"offer {offer_id} was rejected and cannot be bound",
+    )
+    require(
+        decision.selected_offer_id == offer_id,
+        "binding.offer_matches_decision",
+        f"decision selected {decision.selected_offer_id}, not offer {offer_id}",
+    )
+    amount = decision.requested_amount
+    if amount is None:
+        # Raised directly rather than via require() so the type checker narrows
+        # `amount` here. Never an `assert`: assertions vanish under `python -O`.
+        raise InvariantViolation(
+            "binding.decision_has_amount",
+            "an authorizable decision must carry the adjudicated amount",
+        )
+    require(
+        amount == unit_amount_inr * quantity,
+        "binding.amount_matches_offer_and_quantity",
+        f"decision amount {amount} != unit {unit_amount_inr} x qty {quantity}",
+    )
+
+    return BoundTransaction(
+        merchant_id=merchant_id,
+        product_id=product_id,
+        quantity=quantity,
+        amount_inr=amount,
+        currency=currency,
+        policy_version=decision.policy_version,
+        offer_version=offer_version,
+        expires_at=expires_at,
+        nonce=nonce,
+    )
 
 
 def build_bound_transaction(
@@ -42,46 +121,92 @@ def build_bound_transaction(
     expires_at: datetime,
 ) -> BoundTransaction:
     """Build the canonical transaction an authorization will commit to."""
-    require(
-        decision.decision in AUTHORIZABLE_OUTCOMES,
-        "binding.decision_is_authorizable",
-        f"cannot bind a transaction for a {decision.decision.value} decision",
-    )
-    require(
-        offer.valid,
-        "binding.offer_is_valid",
-        f"offer {offer.offer_id} was rejected and cannot be bound",
-    )
-    require(
-        decision.selected_offer_id == offer.offer_id,
-        "binding.offer_matches_decision",
-        f"decision selected {decision.selected_offer_id}, not offer {offer.offer_id}",
-    )
-    amount = decision.requested_amount
-    if amount is None:
-        # Raised directly rather than via require() so the type checker narrows
-        # `amount` here. Never an `assert`: assertions vanish under `python -O`.
-        raise InvariantViolation(
-            "binding.decision_has_amount",
-            "an authorizable decision must carry the adjudicated amount",
-        )
-    require(
-        amount == offer.amount_inr.value * quantity,
-        "binding.amount_matches_offer_and_quantity",
-        f"decision amount {amount} != unit {offer.amount_inr.value} x qty {quantity}",
-    )
-
-    return BoundTransaction(
-        # AUTHENTICATED identity — never offer.claimed_merchant_id.
+    return _build_bound_transaction_from_values(
+        offer_id=offer.offer_id,
+        offer_valid=offer.valid,
         merchant_id=offer.merchant_id.value,
         product_id=offer.product_id.value,
-        quantity=quantity,
-        amount_inr=amount,
+        unit_amount_inr=offer.amount_inr.value,
         currency=offer.currency.value,
-        policy_version=decision.policy_version,
         offer_version=offer.offer_version,
+        decision=decision,
+        quantity=quantity,
         expires_at=expires_at,
         nonce=nonce,
+    )
+
+
+async def build_bound_transaction_from_selected_offer(
+    session: AsyncSession,
+    *,
+    mission_id: uuid.UUID,
+    candidate: OfferCandidate,
+    selected_offer_version: str,
+    decision: PolicyDecision,
+    quantity: int,
+    nonce: str,
+    expires_at: datetime,
+) -> BoundTransaction:
+    """Reload and reconcile the selected offer before minting authorization.
+
+    The candidate contributes one opaque identifier. Every authority-bearing
+    transaction value is reloaded from the server-held structured ``offers``
+    row under a row lock, and its content fingerprint is recomputed instead of
+    trusting the stored version column alone. A missing row, a changed row, or
+    stale version metadata produces the same stable fail-closed reason.
+
+    The row is server-controlled after ingress, but its product/price content
+    originated with the merchant and is not cryptographically authenticated.
+    C1 treats database integrity and the merchant adapter registration as TCB
+    assumptions; this function does not pretend to add merchant signatures.
+    """
+    result = await session.execute(
+        select(Offer)
+        .where(
+            Offer.id == candidate.offer_id,
+            Offer.mission_id == mission_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise BindRefusedOfferChanged(
+            mission_id=mission_id,
+            offer_id=candidate.offer_id,
+            detail="the selected offer is absent at bind time",
+        )
+
+    current_version = compute_offer_version(
+        merchant_id=row.merchant_id,
+        product_id=row.product_id,
+        amount_inr=row.amount_inr,
+        currency=row.currency,
+        rating=row.rating,
+        in_stock=row.in_stock,
+        offered_at=as_utc(row.offered_at),
+    )
+    if row.offer_version != current_version or current_version != selected_offer_version:
+        raise BindRefusedOfferChanged(
+            mission_id=mission_id,
+            offer_id=candidate.offer_id,
+            detail="selected offer version does not match the bind-time offer record",
+        )
+
+    return _build_bound_transaction_from_values(
+        offer_id=row.id,
+        offer_valid=row.valid,
+        # Trusted transport identity persisted at ingress, never the payload's
+        # claimed merchant identity retained in ``Offer.raw``.
+        merchant_id=row.merchant_id,
+        product_id=row.product_id,
+        unit_amount_inr=row.amount_inr,
+        currency=row.currency,
+        offer_version=current_version,
+        decision=decision,
+        quantity=quantity,
+        nonce=nonce,
+        expires_at=expires_at,
     )
 
 

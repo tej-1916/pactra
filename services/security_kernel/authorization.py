@@ -585,7 +585,15 @@ async def verify_authorization_for_payment(
     expected_status: AuthorizationStatus,
     now: datetime,
 ) -> BoundTransaction:
-    """Rebuild, classify, and re-verify an authorization before payment work."""
+    """Rebuild, classify, and re-verify an authorization before payment work.
+
+    Expiry is a precondition only while consuming an ``ACTIVE`` authorization.
+    Once it is atomically ``CONSUMED`` into a durable PaymentIntent/outbox, the
+    consumed artifact represents work that was authorized in time. A delayed
+    worker therefore re-verifies the durable proof, policy origin, binding
+    version, digest, and expected status without retroactively invalidating the
+    work because its original approval window elapsed in the queue.
+    """
     transaction = rebuild_bound_transaction(row)
     if row.binding_version != BINDING_VERSION:
         raise TransactionBindingFailure(
@@ -605,9 +613,8 @@ async def verify_authorization_for_payment(
             row.authorization_id,
             f"authorization is {row.status}, expected {expected_status.value}",
         )
-    if now >= as_utc(row.expires_at):
-        if expected_status == AuthorizationStatus.ACTIVE:
-            await expire_if_stale(session, authorization_id=row.authorization_id, now=now)
+    if expected_status == AuthorizationStatus.ACTIVE and now >= as_utc(row.expires_at):
+        await expire_if_stale(session, authorization_id=row.authorization_id, now=now)
         raise AuthorizationExpired(
             row.authorization_id,
             f"authorization expired at {as_utc(row.expires_at).isoformat()}",

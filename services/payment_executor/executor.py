@@ -136,12 +136,18 @@ async def apply_payment_transition(
     intent.state = target.value
     intent.last_reason_code = reason_code
     await session.flush()
+    event_payload = {"payment_intent_id": str(intent.id), "state": target.value, **payload}
+    if reason_code is not None:
+        # The durable state already records this code. Carry the same value into
+        # the source audit event so a Decision Trace can explain the transition
+        # without consulting mutable live rows or inventing a reason later.
+        event_payload["reason_code"] = reason_code
     await append_event(
         session,
         mission_id=intent.mission_id,
         event_type=event_type,
         actor=ACTOR,
-        payload={"payment_intent_id": str(intent.id), "state": target.value, **payload},
+        payload=event_payload,
     )
 
 
@@ -392,10 +398,12 @@ async def dispatch_create(
     if current != PaymentIntentState.QUEUED:
         raise IllegalPaymentTransition(current, PaymentIntentState.PROCESSING)
 
-    # FINAL SECURITY GATE.  Reload the durable authorization and re-verify its
-    # stored proof immediately before any provider lookup/create call.  Compare
-    # every transaction field copied onto the intent so post-queue corruption
-    # fails closed before provider I/O.
+    # FINAL SECURITY GATE. Reload the durable authorization and re-verify its
+    # stored proof immediately before any provider lookup/create call. The
+    # authorization is already CONSUMED: expiry was enforced atomically when
+    # the PaymentIntent/outbox became durable, so queue delay does not revoke
+    # that authorized work. Compare every transaction field copied onto the
+    # intent so post-queue corruption still fails closed before provider I/O.
     authorization = await session.get(
         AuthorizationRow,
         intent.authorization_id,

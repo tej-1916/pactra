@@ -346,13 +346,9 @@ async def test_replay_reconstructs_a_terminal_payment_failure(sessionmaker):
     assert result.comparison.matches is True
     assert result.comparison.payment_matches is True
 
-    # DOCUMENTED LIMITATION, asserted so it cannot drift unnoticed.
-    # `apply_payment_transition` writes `reason_code` to the payment_intents
-    # COLUMN but not into the audit payload, so PROVIDER_TERMINAL_FAILURE is not
-    # in the ledger and replay cannot know it. The projection leaves it None
-    # rather than inferring it from the event type — inferring would be
-    # fabricating a value the events do not contain. See README, "What replay
-    # cannot reconstruct".
+    # C1 writes the same stable reason code to the source audit event as to the
+    # durable intent, so replay/Decision Trace can explain the transition
+    # without consulting mutable live state or inferring a reason.
     async with sessionmaker() as check:
         intent = (
             await check.execute(
@@ -360,7 +356,7 @@ async def test_replay_reconstructs_a_terminal_payment_failure(sessionmaker):
             )
         ).scalar_one()
     assert intent.last_reason_code == ReasonCode.PROVIDER_TERMINAL_FAILURE.value
-    assert state.payment.last_reason_code is None
+    assert state.payment.last_reason_code == ReasonCode.PROVIDER_TERMINAL_FAILURE.value
 
 
 async def test_replay_distinguishes_retryable_from_terminal_failure(sessionmaker):

@@ -63,7 +63,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from apps.api.db.models import AuditEventRow, AuthorizationRow, Mission, PaymentIntentRow
+from packages.schemas.approval import ApprovalScheme
 from packages.schemas.audit import (
+    DecisionStage,
+    DecisionTraceEntry,
+    DecisionTraceEvidenceRef,
+    DecisionTraceNextAction,
+    DecisionTraceVerdict,
     MissionProjection,
     MissionReplayResult,
     ReplayedAuthorization,
@@ -75,7 +81,7 @@ from packages.schemas.audit import (
     StateComparison,
 )
 from packages.schemas.authorization import AuthorizationStatus
-from packages.schemas.domain import EventType, MissionState, PolicyOutcome
+from packages.schemas.domain import EventType, MissionState, PolicyOutcome, as_utc
 from packages.schemas.payment import PaymentIntentState
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,7 +132,50 @@ _SECURITY_DETAIL_KEYS = (
     "presented_digest_prefix",
     "reason_codes",
     "terminal",
+    "invariant_id",
+    "bind_refused",
 )
+
+# Exhaustive stage classification. A bind-time SECURITY_VIOLATION is promoted
+# from ADMIT to BIND by ``_trace_stage`` based on its allow-listed marker.
+TRACE_STAGE_BY_EVENT: dict[EventType, DecisionStage] = {
+    EventType.MISSION_CREATED: DecisionStage.ADMIT,
+    EventType.INTENT_PARSED: DecisionStage.ADMIT,
+    EventType.DISCOVERY_STARTED: DecisionStage.ADMIT,
+    EventType.OFFERS_RECEIVED: DecisionStage.ADMIT,
+    EventType.OFFERS_NORMALIZED: DecisionStage.ADMIT,
+    EventType.OFFERS_RANKED: DecisionStage.ADMIT,
+    EventType.POLICY_DECISION: DecisionStage.ADMIT,
+    EventType.APPROVAL_REQUESTED: DecisionStage.BIND,
+    EventType.MISSION_DENIED: DecisionStage.ADMIT,
+    EventType.SECURITY_VIOLATION: DecisionStage.ADMIT,
+    EventType.AUTHORIZATION_CREATED: DecisionStage.BIND,
+    EventType.AUTHORIZATION_ACTIVATED: DecisionStage.BIND,
+    EventType.AUTHORIZATION_CONSUMED: DecisionStage.BIND,
+    EventType.AUTHORIZATION_EXPIRED: DecisionStage.BIND,
+    EventType.AUTHORIZATION_REVOKED: DecisionStage.BIND,
+    EventType.AUTHORIZATION_REPLAY_DETECTED: DecisionStage.BIND,
+    EventType.TRANSACTION_BINDING_FAILURE: DecisionStage.BIND,
+    EventType.PAYMENT_INTENT_CREATED: DecisionStage.EXECUTE,
+    EventType.PAYMENT_QUEUED: DecisionStage.EXECUTE,
+    EventType.PAYMENT_ATTEMPTED: DecisionStage.EXECUTE,
+    EventType.PAYMENT_PROVIDER_TIMEOUT: DecisionStage.EXECUTE,
+    EventType.PAYMENT_PROVIDER_UNCERTAIN: DecisionStage.EXECUTE,
+    EventType.PAYMENT_RETRY_SCHEDULED: DecisionStage.EXECUTE,
+    EventType.PAYMENT_RECONCILED: DecisionStage.EXECUTE,
+    EventType.PAYMENT_SUCCEEDED: DecisionStage.EXECUTE,
+    EventType.PAYMENT_FAILED: DecisionStage.EXECUTE,
+    EventType.PAYMENT_INTENT_REUSED: DecisionStage.EXECUTE,
+    EventType.IDEMPOTENCY_CONFLICT: DecisionStage.EXECUTE,
+    EventType.OUTBOX_EVENT_DEAD_LETTERED: DecisionStage.EXECUTE,
+    EventType.WEBHOOK_VERIFIED: DecisionStage.EXECUTE,
+    EventType.WEBHOOK_REJECTED: DecisionStage.EXECUTE,
+    EventType.DUPLICATE_WEBHOOK_IGNORED: DecisionStage.EXECUTE,
+    EventType.WEBHOOK_OUT_OF_ORDER_IGNORED: DecisionStage.EXECUTE,
+    # Risk is advisory evidence about admission inputs. It is never a fourth
+    # authority stage and never moves the mission or payment state.
+    EventType.RISK_ASSESSED: DecisionStage.ADMIT,
+}
 
 
 class ReplayRefused(Exception):
@@ -218,6 +267,16 @@ def _opt_str_list(event: AuditEventRow, key: str) -> list[str] | None:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise _refuse(event, f"payload field '{key}' is not a list of strings")
     return value
+
+
+def _opt_approval_scheme(event: AuditEventRow) -> ApprovalScheme | None:
+    value = _opt_str(event, "approval_scheme")
+    if value is None:
+        return None
+    try:
+        return ApprovalScheme(value)
+    except ValueError as unknown:
+        raise _refuse(event, f"approval scheme {value!r} is not known to this build") from unknown
 
 
 def _security_detail(event: AuditEventRow) -> dict:
@@ -412,6 +471,7 @@ def _on_authorization_created(state: _ReplayState, event: AuditEventRow) -> None
     auth.policy_version = _opt_str(event, "policy_version")
     auth.offer_version = _opt_str(event, "offer_version")
     auth.binding_version = _opt_str(event, "binding_version")
+    auth.approval_scheme = _opt_approval_scheme(event)
     auth.expires_at = _opt_str(event, "expires_at")
     auth.bound_merchant_id = _opt_str(event, "bound_merchant_id")
     auth.bound_product_id = _opt_str(event, "bound_product_id")
@@ -427,6 +487,9 @@ def _on_authorization_activated(state: _ReplayState, event: AuditEventRow) -> No
     auth.transaction_digest_prefix = (
         _opt_str(event, "transaction_digest_prefix") or auth.transaction_digest_prefix
     )
+    scheme = _opt_approval_scheme(event)
+    if scheme is not None:
+        auth.approval_scheme = scheme
     if state.approval_required:
         # A valid USER_ED25519 proof activated it. On the ALLOW path the kernel
         # uses POLICY_AUTO without a user approval step.
@@ -620,6 +683,227 @@ def _advisory_str(value: object) -> str | None:
     lenient where every enforcement path is not.
     """
     return value if isinstance(value, str) else None
+
+
+# --------------------------------------------------------------------------- #
+# C1 Decision Trace — allow-listed projection, never raw event payloads
+# --------------------------------------------------------------------------- #
+_TRACE_REFUSALS = frozenset(
+    {
+        EventType.MISSION_DENIED,
+        EventType.SECURITY_VIOLATION,
+        EventType.AUTHORIZATION_EXPIRED,
+        EventType.AUTHORIZATION_REVOKED,
+        EventType.AUTHORIZATION_REPLAY_DETECTED,
+        EventType.TRANSACTION_BINDING_FAILURE,
+        EventType.IDEMPOTENCY_CONFLICT,
+        EventType.WEBHOOK_REJECTED,
+    }
+)
+_TRACE_PENDING = frozenset(
+    {
+        EventType.APPROVAL_REQUESTED,
+        EventType.AUTHORIZATION_CREATED,
+        EventType.PAYMENT_QUEUED,
+        EventType.PAYMENT_ATTEMPTED,
+        EventType.PAYMENT_PROVIDER_TIMEOUT,
+        EventType.PAYMENT_PROVIDER_UNCERTAIN,
+        EventType.PAYMENT_RETRY_SCHEDULED,
+        EventType.PAYMENT_RECONCILED,
+    }
+)
+_TRACE_IGNORED = frozenset(
+    {
+        EventType.DUPLICATE_WEBHOOK_IGNORED,
+        EventType.WEBHOOK_OUT_OF_ORDER_IGNORED,
+    }
+)
+
+
+def _trace_reason_codes(event: AuditEventRow) -> list[str]:
+    """Copy only stable machine reason codes, preserving source order."""
+    codes: list[str] = []
+    single = event.payload.get("reason_code")
+    if isinstance(single, str):
+        codes.append(single)
+    multiple = event.payload.get("reason_codes")
+    if isinstance(multiple, list):
+        codes.extend(code for code in multiple if isinstance(code, str))
+    # A payload should not repeat itself, but deterministic de-duplication keeps
+    # the public contract stable if it does.
+    return list(dict.fromkeys(codes))
+
+
+def _trace_approval_scheme(event: AuditEventRow) -> ApprovalScheme | None:
+    raw = event.payload.get("approval_scheme")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return ApprovalScheme(raw)
+    except ValueError:
+        return None
+
+
+def _trace_policy_outcome(event: AuditEventRow) -> PolicyOutcome | None:
+    if event.event_type != EventType.POLICY_DECISION.value:
+        return None
+    raw = event.payload.get("decision")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return PolicyOutcome(raw)
+    except ValueError:  # replay already refuses this malformed source event
+        return None
+
+
+def _trace_payment_state(event: AuditEventRow) -> PaymentIntentState | None:
+    raw = event.payload.get("state")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return PaymentIntentState(raw)
+    except ValueError:
+        return None
+
+
+def _trace_stage(event_type: EventType, event: AuditEventRow) -> DecisionStage:
+    if event_type is EventType.SECURITY_VIOLATION and event.payload.get("bind_refused") is True:
+        return DecisionStage.BIND
+    return TRACE_STAGE_BY_EVENT[event_type]
+
+
+def _trace_verdict(event_type: EventType, event: AuditEventRow) -> DecisionTraceVerdict:
+    if event_type is EventType.RISK_ASSESSED:
+        return DecisionTraceVerdict.ADVISORY
+    if event_type is EventType.POLICY_DECISION:
+        outcome = _trace_policy_outcome(event)
+        if outcome is PolicyOutcome.DENY:
+            return DecisionTraceVerdict.REFUSED
+        if outcome is PolicyOutcome.REQUIRE_APPROVAL:
+            return DecisionTraceVerdict.PENDING
+    if event_type in _TRACE_REFUSALS:
+        return DecisionTraceVerdict.REFUSED
+    if event_type in _TRACE_IGNORED:
+        return DecisionTraceVerdict.IGNORED
+    if event_type is EventType.PAYMENT_SUCCEEDED:
+        return DecisionTraceVerdict.SUCCEEDED
+    if event_type in {EventType.PAYMENT_FAILED, EventType.OUTBOX_EVENT_DEAD_LETTERED}:
+        return DecisionTraceVerdict.FAILED
+    if event_type in _TRACE_PENDING:
+        return DecisionTraceVerdict.PENDING
+    return DecisionTraceVerdict.ACCEPTED
+
+
+def _trace_next_action(
+    event_type: EventType,
+    event: AuditEventRow,
+    *,
+    stage: DecisionStage,
+) -> DecisionTraceNextAction:
+    if event_type is EventType.RISK_ASSESSED:
+        # Advice never grants, blocks, or selects the workflow's next action.
+        return DecisionTraceNextAction.NONE
+    if event_type is EventType.SECURITY_VIOLATION:
+        return (
+            DecisionTraceNextAction.NONE
+            if stage is DecisionStage.BIND
+            else DecisionTraceNextAction.CONTINUE_ADMIT
+        )
+    if event_type is EventType.POLICY_DECISION:
+        return (
+            DecisionTraceNextAction.NONE
+            if _trace_policy_outcome(event) is PolicyOutcome.DENY
+            else DecisionTraceNextAction.CONTINUE_BIND
+        )
+    if event_type in {
+        EventType.MISSION_DENIED,
+        EventType.AUTHORIZATION_EXPIRED,
+        EventType.AUTHORIZATION_REVOKED,
+        EventType.AUTHORIZATION_REPLAY_DETECTED,
+        EventType.TRANSACTION_BINDING_FAILURE,
+        EventType.IDEMPOTENCY_CONFLICT,
+        EventType.WEBHOOK_REJECTED,
+        EventType.PAYMENT_SUCCEEDED,
+        EventType.OUTBOX_EVENT_DEAD_LETTERED,
+    }:
+        return DecisionTraceNextAction.NONE
+    if event_type is EventType.APPROVAL_REQUESTED:
+        return DecisionTraceNextAction.AWAIT_USER_SIGNATURE
+    if event_type is EventType.AUTHORIZATION_CREATED:
+        return (
+            DecisionTraceNextAction.AWAIT_USER_SIGNATURE
+            if _trace_approval_scheme(event) is ApprovalScheme.USER_ED25519
+            else DecisionTraceNextAction.CONTINUE_BIND
+        )
+    if event_type is EventType.AUTHORIZATION_ACTIVATED:
+        return DecisionTraceNextAction.CREATE_PAYMENT_INTENT
+    if event_type is EventType.AUTHORIZATION_CONSUMED:
+        return DecisionTraceNextAction.DISPATCH_PAYMENT
+    if event_type in {EventType.PAYMENT_INTENT_CREATED, EventType.PAYMENT_QUEUED}:
+        return DecisionTraceNextAction.DISPATCH_PAYMENT
+    if event_type in {
+        EventType.PAYMENT_PROVIDER_TIMEOUT,
+        EventType.PAYMENT_PROVIDER_UNCERTAIN,
+    }:
+        return DecisionTraceNextAction.RECONCILE_PAYMENT
+    if event_type is EventType.PAYMENT_RETRY_SCHEDULED:
+        return DecisionTraceNextAction.RETRY_PAYMENT
+    if event_type is EventType.PAYMENT_FAILED:
+        return (
+            DecisionTraceNextAction.RETRY_PAYMENT
+            if _trace_payment_state(event) is PaymentIntentState.FAILED_RETRYABLE
+            else DecisionTraceNextAction.NONE
+        )
+    if event_type is EventType.PAYMENT_INTENT_REUSED:
+        state = _trace_payment_state(event)
+        if state is PaymentIntentState.QUEUED:
+            return DecisionTraceNextAction.DISPATCH_PAYMENT
+        if state in {
+            PaymentIntentState.PROCESSING,
+            PaymentIntentState.PROVIDER_PENDING,
+        }:
+            return DecisionTraceNextAction.AWAIT_PROVIDER
+        return DecisionTraceNextAction.NONE
+    if stage is DecisionStage.ADMIT:
+        return DecisionTraceNextAction.CONTINUE_ADMIT
+    if stage is DecisionStage.BIND:
+        return DecisionTraceNextAction.CONTINUE_BIND
+    return DecisionTraceNextAction.AWAIT_PROVIDER
+
+
+def decision_trace_from_events(events: Sequence[AuditEventRow]) -> list[DecisionTraceEntry]:
+    """Project verified audit events into a deterministic, secret-free trace.
+
+    ``replay_mission`` invokes this only after chain verification and successful
+    replay. The function performs no I/O and sorts by the same total order as
+    ``reduce_events``.
+    """
+    trace: list[DecisionTraceEntry] = []
+    for event in sorted(events, key=lambda row: (row.sequence, str(row.event_id))):
+        event_type = EventType(event.event_type)
+        stage = _trace_stage(event_type, event)
+        invariant = event.payload.get("invariant_id")
+        trace.append(
+            DecisionTraceEntry(
+                stage=stage,
+                event_type=event_type,
+                verdict=_trace_verdict(event_type, event),
+                reason_codes=_trace_reason_codes(event),
+                invariant_id=invariant if isinstance(invariant, str) else None,
+                approval_scheme=_trace_approval_scheme(event),
+                policy_outcome=_trace_policy_outcome(event),
+                payment_state=_trace_payment_state(event),
+                advisory=event_type is EventType.RISK_ASSESSED,
+                next_action=_trace_next_action(event_type, event, stage=stage),
+                evidence=DecisionTraceEvidenceRef(
+                    event_id=event.event_id,
+                    sequence=event.sequence,
+                    actor=event.actor,
+                ),
+                recorded_at=as_utc(event.created_at),
+            )
+        )
+    return trace
 
 
 #: Exhaustive by contract. `test_every_event_type_has_a_reducer` asserts this
@@ -819,6 +1103,7 @@ async def replay_mission(
             verification=verification,
             state=None,
             comparison=None,
+            decision_trace=[],
             detail=(
                 "the audit chain did not verify; replaying it would present a "
                 "reconstruction built on evidence already known to be altered"
@@ -838,6 +1123,7 @@ async def replay_mission(
             verification=verification,
             state=None,
             comparison=None,
+            decision_trace=[],
             unsupported_events=[{"sequence": refusal.sequence, "event_type": refusal.event_type}],
             detail=refusal.detail,
         )
@@ -852,4 +1138,5 @@ async def replay_mission(
         verification=verification,
         state=projection,
         comparison=comparison,
+        decision_trace=decision_trace_from_events(events),
     )

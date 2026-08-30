@@ -1,0 +1,244 @@
+{
+  "mission_id": "f0701f7d-ae09-49eb-aa56-26292f33481e",
+  "trusted": true,
+  "decision_trace": [
+    {
+      "stage": "ADMIT",
+      "event_type": "MISSION_CREATED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_ADMIT",
+      "evidence": {
+        "event_id": "74b604d6-9472-49a6-b7d0-08ecd144cf88",
+        "sequence": 0,
+        "actor": "orchestrator"
+      },
+      "recorded_at": "2026-08-30T12:44:54.683488Z"
+    },
+    {
+      "stage": "ADMIT",
+      "event_type": "INTENT_PARSED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_ADMIT",
+      "evidence": {
+        "event_id": "3722f7c0-5193-4b7f-ad55-9b37f021fbf3",
+        "sequence": 1,
+        "actor": "orchestrator"
+      },
+      "recorded_at": "2026-08-30T12:44:54.694537Z"
+    },
+    {
+      "stage": "ADMIT",
+      "event_type": "DISCOVERY_STARTED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_ADMIT",
+      "evidence": {
+        "event_id": "876d5e16-d5a8-454d-8814-16e6fe98e97d",
+        "sequence": 2,
+        "actor": "orchestrator"
+      },
+      "recorded_at": "2026-08-30T12:44:54.700035Z"
+    },
+    {
+      "stage": "ADMIT",
+      "event_type": "OFFERS_RECEIVED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_ADMIT",
+      "evidence": {
+        "event_id": "4f5c989a-ee41-450e-9cac-a8544233ecc7",
+        "sequence": 3,
+        "actor": "orchestrator"
+      },
+      "recorded_at": "2026-08-30T12:44:54.705910Z"
+    },
+    {
+      "stage": "ADMIT",
+      "event_type": "SECURITY_VIOLATION",
+      "verdict": "REFUSED",
+      "reason_codes": [
+        "AUTHORITY_ESCALATION"
+      ],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_ADMIT",
+      "evidence": {
+        "event_id": "5bfcdd1a-9c85-4a89-9987-030313a2a5d1",
+        "sequence": 4,
+        "actor": "security-kernel"
+      },
+      "recorded_at": "2026-08-30T12:44:54.708826Z"
+    },
+    {
+      "stage": "ADMIT",
+      "event_type": "OFFERS_NORMALIZED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_ADMIT",
+      "evidence": {
+        "event_id": "789a3b28-b439-421c-b2f6-0b6c1a67d896",
+        "sequence": 5,
+        "actor": "orchestrator"
+      },
+      "recorded_at": "2026-08-30T12:44:54.723286Z"
+    },
+    {
+      "stage": "ADMIT",
+      "event_type": "OFFERS_RANKED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_ADMIT",
+      "evidence": {
+        "event_id": "db9cc005-a71c-4a92-923c-52a251ed29eb",
+        "sequence": 6,
+        "actor": "orchestrator"
+      },
+      "recorded_at": "2026-08-30T12:44:54.736024Z"
+    },
+    {
+      "stage": "ADMIT",
+      "event_type": "POLICY_DECISION",
+      "verdict": "ACCEPTED",
+      "reason_codes": [
+        "WITHIN_LIMITS"
+      ],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": "ALLOW",
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_BIND",
+      "evidence": {
+        "event_id": "bb3124f3-4a6e-49a4-9670-cfd2139d776a",
+        "sequence": 7,
+        "actor": "policy-engine"
+      },
+      "recorded_at": "2026-08-30T12:44:54.743303Z"
+    },
+    {
+      "stage": "BIND",
+      "event_type": "AUTHORIZATION_CREATED",
+      "verdict": "PENDING",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": "POLICY_AUTO",
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CONTINUE_BIND",
+      "evidence": {
+        "event_id": "62c7d078-b1cd-4ebc-984f-3961893ab85f",
+        "sequence": 8,
+        "actor": "security-kernel"
+      },
+      "recorded_at": "2026-08-30T12:44:54.754788Z"
+    },
+    {
+      "stage": "BIND",
+      "event_type": "AUTHORIZATION_ACTIVATED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": "POLICY_AUTO",
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "CREATE_PAYMENT_INTENT",
+      "evidence": {
+        "event_id": "da5a4321-c28a-4911-8baa-257840a13d5c",
+        "sequence": 9,
+        "actor": "security-kernel"
+      },
+      "recorded_at": "2026-08-30T12:44:54.764239Z"
+    },
+    {
+      "stage": "BIND",
+      "event_type": "AUTHORIZATION_CONSUMED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "DISPATCH_PAYMENT",
+      "evidence": {
+        "event_id": "66992343-5748-4257-93ad-264f6960bdeb",
+        "sequence": 10,
+        "actor": "security-kernel"
+      },
+      "recorded_at": "2026-08-30T12:44:54.809793Z"
+    },
+    {
+      "stage": "EXECUTE",
+      "event_type": "PAYMENT_INTENT_CREATED",
+      "verdict": "ACCEPTED",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": null,
+      "advisory": false,
+      "next_action": "DISPATCH_PAYMENT",
+      "evidence": {
+        "event_id": "e3ed12be-0bbc-49e0-b26b-d1ecc5e98b5c",
+        "sequence": 11,
+        "actor": "payment-executor"
+      },
+      "recorded_at": "2026-08-30T12:44:54.815857Z"
+    },
+    {
+      "stage": "EXECUTE",
+      "event_type": "PAYMENT_QUEUED",
+      "verdict": "PENDING",
+      "reason_codes": [],
+      "invariant_id": null,
+      "approval_scheme": null,
+      "policy_outcome": null,
+      "payment_state": "QUEUED",
+      "advisory": false,
+      "next_action": "DISPATCH_PAYMENT",
+      "evidence": {
+        "event_id": "c53d1046-1f34-4d82-a126-a24a0b43f420",
+        "sequence": 12,
+        "actor": "payment-executor"
+      },
+      "recorded_at": "2026-08-30T12:44:54.819420Z"
+    }
+  ]
+}

@@ -54,6 +54,7 @@ from packages.schemas.invariants import InvariantViolation, require
 from packages.schemas.kernel import ProvenancedOffer
 from packages.schemas.merchant import AuthenticatedQuote
 from packages.schemas.provenance import untrusted
+from packages.schemas.transaction import OfferCandidate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent_orchestrator.merchants.base import MerchantAgent
@@ -70,7 +71,10 @@ from services.security_kernel.authorization import (
     generate_nonce,
     issue_authorization,
 )
-from services.security_kernel.binding import build_bound_transaction
+from services.security_kernel.binding import (
+    BindRefusedOfferChanged,
+    build_bound_transaction_from_selected_offer,
+)
 from services.security_kernel.capability import enforce
 from services.security_kernel.capability_registry import capabilities_for
 from services.security_kernel.ingress import protected_policy_values
@@ -391,13 +395,34 @@ class Orchestrator:
                 f"{decision.decision.value} decision produced no offer to bind",
             )
         expires_at = utcnow() + timedelta(seconds=get_settings().authorization_ttl_seconds)
-        transaction = build_bound_transaction(
-            offer=best,
-            decision=decision,
-            quantity=request.quantity,
-            nonce=generate_nonce(),
-            expires_at=expires_at,
-        )
+        try:
+            transaction = await build_bound_transaction_from_selected_offer(
+                session,
+                mission_id=mission.id,
+                # The selector contributes only an opaque ID. Amount, currency,
+                # merchant/product identity, and policy never cross this
+                # declassification boundary from selector output.
+                candidate=OfferCandidate(offer_id=best.offer_id),
+                selected_offer_version=best.offer_version,
+                decision=decision,
+                quantity=request.quantity,
+                nonce=generate_nonce(),
+                expires_at=expires_at,
+            )
+        except BindRefusedOfferChanged as refusal:
+            await append_event(
+                session,
+                mission_id=mission.id,
+                event_type=EventType.SECURITY_VIOLATION,
+                actor="security-kernel",
+                payload={
+                    "reason_code": refusal.reason_code,
+                    "invariant_id": refusal.invariant_id,
+                    "offer_id": str(refusal.offer_id),
+                    "bind_refused": True,
+                },
+            )
+            raise
         # Issued under the kernel principal; `authorization.issue` is denied to
         # the buyer agent, so this path is unreachable from agent-controlled code.
         authorization = await issue_authorization(

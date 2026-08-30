@@ -137,6 +137,9 @@ class ReasonCode(str, Enum):
     AUTHORIZATION_SIGNING_KEY_UNKNOWN = "AUTHORIZATION_SIGNING_KEY_UNKNOWN"
     AUTHORIZATION_PROOF_MISSING = "AUTHORIZATION_PROOF_MISSING"
     AUTHORIZATION_APPROVAL_SCHEME_INVALID = "AUTHORIZATION_APPROVAL_SCHEME_INVALID"
+    # Bind-time declassification. The selected offer snapshot no longer matches
+    # the server-held structured offer record, so no authorization is minted.
+    BIND_REFUSED_OFFER_CHANGED = "BIND_REFUSED_OFFER_CHANGED"
     # Payment reliability (Phase 4)
     IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
     PAYMENT_PROVIDER_TIMEOUT = "PAYMENT_PROVIDER_TIMEOUT"

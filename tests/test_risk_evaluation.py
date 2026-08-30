@@ -460,14 +460,14 @@ def test_the_risk_limitations_are_distinct_from_the_phase_6_security_ones():
     assert all(kid.startswith("KL-") for kid in security_ids)
 
 
-def test_the_phase_6_security_limitations_are_all_still_present():
-    """Phase 7 fixes none of them and must not appear to have removed one."""
+def test_the_current_security_limitations_are_all_still_present():
+    """C1 updates one closed replay gap without hiding the remaining limits."""
     from services.attack_lab.limitations import KNOWN_LIMITATIONS
 
     ids = {limitation.id for limitation in KNOWN_LIMITATIONS}
     for expected in (
         "KL-01-audit-tail-truncation",
-        "KL-02-terminal-reason-code-not-replayable",
+        "KL-02-semantic-intent-infidelity",
         "KL-03-audit-canonicalization-is-weaker",
         "KL-04-no-cryptographic-user-authorization",
         "KL-05-no-cryptographic-merchant-authentication",
