@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     razorpay_key_id: str = "rzp_test_REPLACE_ME"
     razorpay_key_secret: SecretStr = SecretStr("")
     razorpay_webhook_secret: SecretStr = SecretStr("")
+    # Operator acknowledgement only: this does not configure Razorpay. The
+    # matching merchant-dashboard setting must already have been enabled.
+    razorpay_duplicate_receipt_rejection_enabled: bool = False
     razorpay_connect_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
     razorpay_read_timeout_seconds: float = Field(default=7.0, gt=0, le=60)
     razorpay_write_timeout_seconds: float = Field(default=5.0, gt=0, le=30)

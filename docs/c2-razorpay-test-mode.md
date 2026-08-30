@@ -2,7 +2,9 @@
 
 PACTRA uses Razorpay **test mode only**. A key whose id does not begin with
 `rzp_test_` is refused before a provider object can be constructed. Placeholder
-or missing key, API secret, and webhook secret values also fail closed.
+or missing key, API secret, and webhook secret values also fail closed. Provider
+construction additionally fails closed unless the operator acknowledges that
+Razorpay's **reject orders with duplicate receipts** merchant setting is enabled.
 
 ## Honest execution boundary
 
@@ -49,6 +51,23 @@ not-found. Once any provider Order id has been durably linked, even a later
 not-found response cannot license a replacement Order; the intent remains
 uncertain until reconciliation succeeds or is dead-lettered for review.
 
+The guarantees have different boundaries:
+
+- **Guaranteed by PACTRA:** the same idempotency key creates at most one logical
+  PACTRA `PaymentIntent`.
+- **Conditional provider guarantee:** at most one Razorpay Order is created only
+  when Razorpay's merchant setting **reject orders with duplicate receipts** is
+  actually enabled. Razorpay receipt search may return an empty result even when
+  an Order exists, so search alone cannot support the remote-Order claim after a
+  lost create response.
+
+`RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED=true` is only an operator
+acknowledgement that the dashboard setting has already been enabled. It does not
+configure Razorpay and PACTRA cannot independently verify the setting. Without
+the acknowledgement, the Razorpay provider refuses construction; setting the
+flag without configuring the dashboard is a false operational assertion and
+does not establish the conditional guarantee.
+
 ## Exact timeout semantics
 
 Every Razorpay HTTP request has the following defaults, configurable only via
@@ -82,8 +101,12 @@ signature, event id, API secret, or webhook secret.
 
 ## Configuration
 
-Required values are `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and
-`RAZORPAY_WEBHOOK_SECRET`. Secrets use redacted settings types and are never
-returned by APIs or written to audit payloads. The test key id is public and is
-returned only for Razorpay test PaymentIntents because Checkout legitimately
-requires it.
+Required values are `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
+`RAZORPAY_WEBHOOK_SECRET`, and
+`RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED=true`. Before setting the final
+value, an operator must enable **reject orders with duplicate receipts** in the
+Razorpay merchant dashboard. The environment value records that manual
+provider-side configuration; it does not perform it. Secrets use redacted
+settings types and are never returned by APIs or written to audit payloads. The
+test key id is public and is returned only for Razorpay test PaymentIntents
+because Checkout legitimately requires it.

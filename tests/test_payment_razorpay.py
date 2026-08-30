@@ -92,6 +92,7 @@ def make_provider(**kwargs: Any) -> RazorpayTestPaymentProvider:
         key_id=kwargs.pop("key_id", KEY_ID),
         key_secret=kwargs.pop("key_secret", KEY_SECRET),
         webhook_secret=kwargs.pop("webhook_secret", WEBHOOK_SECRET),
+        duplicate_receipt_rejection_enabled=kwargs.pop("duplicate_receipt_rejection_enabled", True),
         **kwargs,
     )
 
@@ -202,10 +203,77 @@ def test_from_environment_requires_credentials(monkeypatch: pytest.MonkeyPatch):
         from_environment()
 
 
+@pytest.mark.parametrize("acknowledgement", [None, "false"])
+def test_from_environment_requires_duplicate_receipt_rejection_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+    acknowledgement: str | None,
+):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    if acknowledgement is None:
+        monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", acknowledgement)
+
+    with pytest.raises(InvariantViolation) as exc:
+        from_environment()
+
+    assert exc.value.invariant == "razorpay.duplicate_receipt_rejection_acknowledged"
+    rendered = str(exc.value)
+    assert KEY_SECRET not in rendered
+    assert WEBHOOK_SECRET not in rendered
+
+
+def test_true_duplicate_receipt_rejection_acknowledgement_allows_provider(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
+
+    assert from_environment().name == "razorpay_test"
+
+
+@pytest.mark.parametrize("acknowledgement", [None, "false"])
+def test_production_registry_refuses_razorpay_without_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+    acknowledgement: str | None,
+):
+    from services.payment_executor.registry import ProviderUnavailable, provider_for
+
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    if acknowledgement is None:
+        monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", acknowledgement)
+
+    with pytest.raises(ProviderUnavailable) as exc:
+        provider_for("razorpay_test", app_env="production")
+
+    assert "razorpay.duplicate_receipt_rejection_acknowledged" in exc.value.detail
+    assert KEY_SECRET not in str(exc.value)
+    assert WEBHOOK_SECRET not in str(exc.value)
+
+
+def test_fake_provider_does_not_require_razorpay_deployment_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from services.payment_executor.registry import provider_for
+
+    monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
+
+    assert provider_for("fake", app_env="development").name == "fake"
+
+
 def test_repr_and_settings_never_render_secrets(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
     provider = from_environment(http_client=StubClient())
     rendered = repr(provider)
     from apps.api.pactra.config import Settings
@@ -648,6 +716,7 @@ async def test_api_route_uses_razorpay_event_id_header_and_never_returns_secrets
     monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
     get_settings.cache_clear()
     body = webhook_body()
     response = await client.post(
@@ -668,6 +737,90 @@ async def test_api_route_uses_razorpay_event_id_header_and_never_returns_secrets
     }
     assert KEY_SECRET not in response.text
     assert WEBHOOK_SECRET not in response.text
+    get_settings.cache_clear()
+
+
+async def test_api_route_rejects_non_ascii_signature_without_state_or_authority_effect(
+    client,
+    sessionmaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from apps.api.db.models import AuthorizationRow, PaymentIntentRow, WebhookEventRow
+    from apps.api.pactra.config import get_settings
+    from services.audit_ledger.ledger import list_events
+    from sqlalchemy import func, select
+
+    _, mission_id, intent_id = await _pending_razorpay_intent(
+        sessionmaker, key="razorpay-route-non-ascii-signature"
+    )
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
+    get_settings.cache_clear()
+
+    async with sessionmaker() as check:
+        before_intent = await check.get(PaymentIntentRow, intent_id)
+        before_authorization = await check.scalar(
+            select(AuthorizationRow).where(AuthorizationRow.mission_id == mission_id)
+        )
+        assert before_intent is not None
+        assert before_authorization is not None
+        payment_before = (
+            before_intent.state,
+            before_intent.provider_payment_id,
+            before_intent.provider_order_id,
+            before_intent.provider_transaction_id,
+            before_intent.provider_receipt,
+            before_intent.provider_status,
+            before_intent.provider_attempts,
+            before_intent.attempts,
+            before_intent.last_reason_code,
+            before_intent.updated_at,
+        )
+        authority_before = (before_authorization.status, before_authorization.consumed_at)
+        audit_before = [event.event_id for event in await list_events(check, mission_id)]
+        webhooks_before = await check.scalar(select(func.count(WebhookEventRow.id)))
+
+    body = webhook_body()
+    response = await client.post(
+        "/api/v1/webhooks/razorpay_test",
+        content=body,
+        headers=[
+            (b"X-Razorpay-Signature", b"\xff"),
+            (b"X-Razorpay-Event-Id", b"evt_non_ascii_signature"),
+            (b"Content-Type", b"application/json"),
+        ],
+    )
+
+    assert response.status_code == 401, response.text
+    assert response.json() == {"detail": {"reason_code": "WEBHOOK_SIGNATURE_INVALID"}}
+    assert KEY_SECRET not in response.text
+    assert WEBHOOK_SECRET not in response.text
+
+    async with sessionmaker() as check:
+        after_intent = await check.get(PaymentIntentRow, intent_id)
+        after_authorization = await check.scalar(
+            select(AuthorizationRow).where(AuthorizationRow.mission_id == mission_id)
+        )
+        assert after_intent is not None
+        assert after_authorization is not None
+        assert (
+            after_intent.state,
+            after_intent.provider_payment_id,
+            after_intent.provider_order_id,
+            after_intent.provider_transaction_id,
+            after_intent.provider_receipt,
+            after_intent.provider_status,
+            after_intent.provider_attempts,
+            after_intent.attempts,
+            after_intent.last_reason_code,
+            after_intent.updated_at,
+        ) == payment_before
+        assert (after_authorization.status, after_authorization.consumed_at) == authority_before
+        assert [event.event_id for event in await list_events(check, mission_id)] == audit_before
+        assert await check.scalar(select(func.count(WebhookEventRow.id))) == webhooks_before
+
     get_settings.cache_clear()
 
 

@@ -20,6 +20,11 @@ failure, malformed success response, or 5xx is ambiguous and becomes
 Secrets are loaded through PACTRA settings, retained only in private
 attributes, omitted from repr/audit/API output, and used solely for HTTP Basic
 Auth or webhook HMAC verification. Live keys are structurally refused.
+
+At-most-one remote Order additionally depends on Razorpay's merchant setting
+"reject orders with duplicate receipts". Provider construction requires an
+operator acknowledgement that this setting is enabled; PACTRA cannot configure
+or independently verify that dashboard setting.
 """
 
 from __future__ import annotations
@@ -92,6 +97,7 @@ class RazorpayTestPaymentProvider:
         key_id: str,
         key_secret: str,
         webhook_secret: str,
+        duplicate_receipt_rejection_enabled: bool = False,
         http_client: Any = None,
         connect_timeout_seconds: float = 3.0,
         read_timeout_seconds: float = 7.0,
@@ -103,6 +109,13 @@ class RazorpayTestPaymentProvider:
             key_id.startswith(TEST_KEY_PREFIX) and key_id != "rzp_test_REPLACE_ME",
             "razorpay.test_mode_only",
             "RAZORPAY_KEY_ID must be a configured Razorpay TEST key; live keys are refused",
+        )
+        require(
+            duplicate_receipt_rejection_enabled is True,
+            "razorpay.duplicate_receipt_rejection_acknowledged",
+            "RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED=true must acknowledge that "
+            "'reject orders with duplicate receipts' is enabled in the Razorpay dashboard; "
+            "PACTRA does not configure this provider setting",
         )
         require(
             _is_configured_secret(key_secret),
@@ -441,8 +454,16 @@ class RazorpayTestPaymentProvider:
         provider_event_id: str | None = None,
     ) -> VerifiedWebhookEvent:
         """Verify raw-body HMAC and parse only supported Razorpay events."""
-        expected = hmac.new(self._webhook_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, signature):
+        expected = (
+            hmac.new(self._webhook_secret.encode("utf-8"), body, hashlib.sha256)
+            .hexdigest()
+            .encode("ascii")
+        )
+        try:
+            supplied = signature.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise WebhookVerificationError(self.name, "X-Razorpay-Signature is not ASCII") from exc
+        if not hmac.compare_digest(expected, supplied):
             raise WebhookVerificationError(self.name, "X-Razorpay-Signature does not match")
         if not provider_event_id:
             raise WebhookVerificationError(
@@ -579,6 +600,7 @@ def from_environment(http_client: Any = None) -> RazorpayTestPaymentProvider:
         key_id=settings.razorpay_key_id,
         key_secret=settings.razorpay_key_secret.get_secret_value(),
         webhook_secret=settings.razorpay_webhook_secret.get_secret_value(),
+        duplicate_receipt_rejection_enabled=(settings.razorpay_duplicate_receipt_rejection_enabled),
         http_client=http_client,
         connect_timeout_seconds=settings.razorpay_connect_timeout_seconds,
         read_timeout_seconds=settings.razorpay_read_timeout_seconds,
