@@ -168,8 +168,12 @@ WebAuthn, or passkey implementation.
 Authorization validity is required when `ACTIVE` is atomically consumed into a
 durable PaymentIntent and transactional outbox. The same database unit checks
 status, digest, and `expires_at > consumption_time`; creates the intent; marks
-the authorization `CONSUMED`; and queues provider work. No database transaction
-is held across provider I/O.
+the authorization `CONSUMED`; and queues provider work. The
+authorization-consumption transaction does not span provider I/O: it commits
+before asynchronous provider handling. The worker uses a separate claim/work
+split: the claim transaction commits before provider handling, while the worker
+handler transaction spans provider I/O and holds the PaymentIntent row lock for
+that handler transaction.
 
 After successful consumption, the PaymentIntent is the durable authorized work.
 A later worker does not retroactively invalidate it merely because the original
