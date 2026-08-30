@@ -128,10 +128,10 @@ export function TaintedText({
       data-provenance="tainted"
       data-suspicious={sanitized.suspicious ? "true" : "false"}
       className={cn(
-        "inline-flex max-w-full min-w-0 items-baseline gap-1.5 border-l-2 border-dotted pl-2",
+        "inline-flex max-w-full min-w-0 items-baseline gap-1.5 border-l-2 border-dashed pl-2",
         sanitized.suspicious
           ? "border-[color:var(--color-critical)]"
-          : "border-[color:var(--color-taint)]",
+          : "border-[color:var(--color-line-strong)]",
         className,
       )}
     >

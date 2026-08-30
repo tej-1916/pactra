@@ -68,26 +68,27 @@
 :root {
   color-scheme: light;
 
-  --pactra-ground: #f4f6fa;
+  --pactra-ground: #f7f9fc;
   --pactra-surface: #ffffff;
-  --pactra-surface-2: #f6f8fc;
-  --pactra-surface-3: #eaeff7;
-  --pactra-line: #dde3ed;
-  --pactra-line-strong: #c2cbdb;
+  --pactra-surface-2: #f2f5f9;
+  --pactra-surface-3: #e8f0f8;
+  --pactra-line: #dce3ec;
+  --pactra-line-strong: #b8c4d4;
 
   --pactra-ink: #0c1220;
-  --pactra-ink-2: #3a4658;
-  --pactra-ink-3: #5c6b80;
-  --pactra-ink-4: #7d8b9f;
+  --pactra-ink-2: #465266;
+  --pactra-ink-3: #65758c;
+  --pactra-ink-4: #899ab0;
 
   --pactra-accent: #1f5fe0;
-  --pactra-accent-2: #6d3fe0;
-  --pactra-accent-dim: #e6edfd;
+  --pactra-accent-2: #1747b0;
+  --pactra-accent-dim: #e8f7fd;
+  --pactra-cyan: #0ea5e9;
 
   --pactra-secure: #04785a;
-  --pactra-advisory: #9a5b04;
+  --pactra-advisory: #b7791f;
   --pactra-critical: #c02231;
-  --pactra-taint: #6b2ecb;
+  --pactra-taint: #0ea5e9;
   --pactra-neutral: #55637a;
 
   --pactra-scrim: rgb(12 18 32 / 0.42);
@@ -95,7 +96,7 @@
     0 10px 28px -22px rgb(12 18 32 / 0.35);
   --pactra-shadow-raised: 0 1px 0 0 rgb(255 255 255 / 0.9) inset;
   --pactra-field: radial-gradient(900px 520px at 12% -10%, rgb(31 95 224 / 0.07), transparent 62%),
-    radial-gradient(760px 430px at 92% -2%, rgb(4 120 90 / 0.05), transparent 60%);
+    radial-gradient(760px 430px at 92% -2%, rgb(14 165 233 / 0.05), transparent 60%);
 }
 
 /* ----------------------------------------------------------------- DARK -- */
@@ -121,13 +122,14 @@
   --pactra-ink-4: #4b586b;
 
   --pactra-accent: #4f8dfd;
-  --pactra-accent-2: #a986ff;
-  --pactra-accent-dim: #12233f;
+  --pactra-accent-2: #1f5fe0;
+  --pactra-accent-dim: #0e2340;
+  --pactra-cyan: #38bdf8;
 
   --pactra-secure: #2fd4a7;
   --pactra-advisory: #f2a93b;
   --pactra-critical: #ff5f6d;
-  --pactra-taint: #a986ff;
+  --pactra-taint: #38bdf8;
   --pactra-neutral: #7b8aa0;
 
   --pactra-scrim: rgb(0 0 0 / 0.62);
@@ -135,7 +137,7 @@
     0 18px 36px -28px rgb(0 0 0 / 0.9);
   --pactra-shadow-raised: 0 1px 0 0 rgb(255 255 255 / 0.04) inset;
   --pactra-field: radial-gradient(900px 500px at 12% -8%, rgb(79 141 253 / 0.07), transparent 62%),
-    radial-gradient(760px 420px at 92% 0%, rgb(47 212 167 / 0.045), transparent 60%);
+    radial-gradient(760px 420px at 92% 0%, rgb(56 189 248 / 0.045), transparent 60%);
 }
 
 html,
@@ -192,6 +194,15 @@ h3 {
   background: var(--color-surface);
   border: 1px solid var(--color-line);
   border-radius: 10px;
+  box-shadow: var(--pactra-shadow-panel);
+}
+
+@utility glass-panel {
+  background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in srgb, var(--color-line) 80%, white 20%);
+  border-radius: 12px;
   box-shadow: var(--pactra-shadow-panel);
 }
 
