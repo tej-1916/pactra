@@ -1,52 +1,37 @@
-"""``RazorpayTestPaymentProvider`` — TEST MODE ONLY.
+"""Real Razorpay TEST MODE provider.
 
-Added only after every reliability invariant was proven against
-``FakePaymentProvider``. Nothing in this module changes the executor: the
-guarantees live in the executor and its storage constraints, and this adapter is
-just another implementation of ``PaymentProvider``.
+PACTRA creates a Razorpay Order server-side. It never attempts to collect card
+or other payment-instrument details: the customer completes Razorpay Checkout,
+and PACTRA learns the result from a signed webhook or an authenticated API
+lookup. An Order is therefore provider-pending until Razorpay reports it paid
+and a captured ``pay_...`` entity can be identified.
 
-DOCUMENTED LIMITATIONS — these are gaps, not features, and none of them is
-simulated to look otherwise
----------------------------------------------------------------------------
-1. **Razorpay does not enforce receipt uniqueness.** PACTRA sends its
-   idempotency key as the Order ``receipt`` and reconciles with
-   ``GET /v1/orders?receipt=…``, which is the documented way to look an order up
-   by receipt. Razorpay's documentation does NOT state that a duplicate receipt
-   is rejected, so this adapter does not claim provider-side idempotency the way
-   ``FakePaymentProvider`` legitimately does. The duplicate-prevention guarantee
-   here rests entirely on PACTRA's own ``UNIQUE(idempotency_key)`` plus the
-   PROVIDER_PENDING/reconciliation path — which is exactly why those were built
-   without assuming provider help.
+Lost create responses are recovered by a deterministic, provider-safe receipt.
+Razorpay receipts are limited to 40 characters, while PACTRA idempotency keys
+may be 200 characters, so the adapter sends ``pactra_`` plus 132 bits of the
+key's SHA-256 digest. The same input always produces the same receipt and the
+original key never leaves PACTRA.
 
-2. **An Order is not a Payment.** Razorpay's server-side API creates an *Order*;
-   the *Payment* is produced when a customer completes Checkout. This adapter
-   therefore reports the Order as the provider reference and maps order status,
-   not payment status. A completed end-to-end Razorpay payment needs a Checkout
-   front end, which Phase 4 does not build. The adapter is labelled ``partial``
-   for that reason.
+Every network call has two independent bounds: explicit httpx connect/read/
+write/pool timeouts and an overall wall-clock timeout. A create transport
+failure, malformed success response, or 5xx is ambiguous and becomes
+``ProviderTimeout``; it is never treated as proof that no Order was created.
 
-3. **Not exercised against the live Razorpay API in this phase.** The tests here
-   cover signature verification and the test-mode guard, both of which are
-   offline and both of which follow published Razorpay behaviour. The HTTP paths
-   are unverified against a real endpoint and are marked as such. They are not
-   presented as tested.
-
-Webhook signature verification IS implemented faithfully: Razorpay documents
-``X-Razorpay-Signature`` as ``HMAC-SHA256(raw_body, webhook_secret)``, hex
-encoded, and that is precisely what is computed and compared here.
-
-SECRETS. The key secret and webhook secret are read from the environment only.
-They are never defaulted to a real value, never logged, never written to an
-audit payload, and never returned by the API.
+Secrets are loaded through PACTRA settings, retained only in private
+attributes, omitted from repr/audit/API output, and used solely for HTTP Basic
+Auth or webhook HMAC verification. Live keys are structurally refused.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
+from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from packages.schemas.invariants import require
 from packages.schemas.payment import (
     PaymentRequest,
@@ -64,43 +49,40 @@ from services.payment_executor.providers.base import (
 )
 
 PROVIDER_NAME = "razorpay_test"
-
-#: Razorpay test-mode keys carry this prefix. A live key does not.
 TEST_KEY_PREFIX = "rzp_test_"
-
 API_BASE = "https://api.razorpay.com/v1"
 
-#: Razorpay order statuses, per its published Orders API.
+RAZORPAY_RECEIPT_MAX_LENGTH = 40
+_RECEIPT_PREFIX = "pactra_"
+_RECEIPT_DIGEST_LENGTH = RAZORPAY_RECEIPT_MAX_LENGTH - len(_RECEIPT_PREFIX)
+
 _ORDER_STATUS_MAP: dict[str, ProviderPaymentStatus] = {
     "created": ProviderPaymentStatus.CREATED,
     "attempted": ProviderPaymentStatus.PENDING,
+    # A paid Order is accepted as success only after _attach_captured_payment
+    # finds the captured pay_... entity through the authenticated API.
     "paid": ProviderPaymentStatus.SUCCEEDED,
-}
-
-#: Razorpay webhook events this adapter understands. Anything else is refused
-#: rather than guessed at — an event whose meaning is not documented must not be
-#: mapped onto a payment state.
-_WEBHOOK_EVENT_MAP: dict[str, WebhookEventType] = {
-    "payment.captured": WebhookEventType.PAYMENT_SUCCEEDED,
-    "order.paid": WebhookEventType.PAYMENT_SUCCEEDED,
-    "payment.failed": WebhookEventType.PAYMENT_FAILED,
-    "payment.authorized": WebhookEventType.PAYMENT_PENDING,
 }
 
 
 class RazorpayTestModeViolation(Exception):
-    """A non-test credential was supplied. Refused before any network call."""
+    """Compatibility name for callers that classify test-mode refusal."""
 
     reason_code = "RAZORPAY_TEST_MODE_REQUIRED"
 
 
-class RazorpayTestPaymentProvider:
-    """Razorpay adapter, restricted to test mode. Status: ``partial``.
+def receipt_for_idempotency_key(idempotency_key: str) -> str:
+    """Return a deterministic Razorpay receipt that never exceeds 40 chars."""
+    digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return f"{_RECEIPT_PREFIX}{digest[:_RECEIPT_DIGEST_LENGTH]}"
 
-    ``http_client`` is injected rather than constructed so the adapter can be
-    unit-tested offline. There is no default client: constructing one implicitly
-    would make it possible to reach the network by accident from a test.
-    """
+
+def _is_configured_secret(value: str) -> bool:
+    return bool(value) and value != "REPLACE_ME"
+
+
+class RazorpayTestPaymentProvider:
+    """Razorpay Orders/Payments adapter restricted to test credentials."""
 
     name = PROVIDER_NAME
 
@@ -111,111 +93,267 @@ class RazorpayTestPaymentProvider:
         key_secret: str,
         webhook_secret: str,
         http_client: Any = None,
-        timeout_seconds: float = 10.0,
+        connect_timeout_seconds: float = 3.0,
+        read_timeout_seconds: float = 7.0,
+        write_timeout_seconds: float = 5.0,
+        pool_timeout_seconds: float = 2.0,
+        overall_timeout_seconds: float = 10.0,
     ) -> None:
-        # Enforced BEFORE anything is stored, so a live key never even lands in
-        # an attribute. This is the "no real-money payments" rule made
-        # structural rather than procedural.
         require(
-            key_id.startswith(TEST_KEY_PREFIX),
+            key_id.startswith(TEST_KEY_PREFIX) and key_id != "rzp_test_REPLACE_ME",
             "razorpay.test_mode_only",
-            f"key_id must be a Razorpay TEST key (prefix '{TEST_KEY_PREFIX}'); "
-            "PACTRA never runs against live credentials",
+            "RAZORPAY_KEY_ID must be a configured Razorpay TEST key; live keys are refused",
         )
         require(
-            bool(key_secret),
+            _is_configured_secret(key_secret),
             "razorpay.key_secret_present",
-            "RAZORPAY_KEY_SECRET is not set; secrets come from the environment only",
+            "RAZORPAY_KEY_SECRET is not configured",
         )
         require(
-            bool(webhook_secret),
+            _is_configured_secret(webhook_secret),
             "razorpay.webhook_secret_present",
-            "RAZORPAY_WEBHOOK_SECRET is not set; webhooks cannot be verified without it",
+            "RAZORPAY_WEBHOOK_SECRET is not configured",
         )
+        for name, value in {
+            "connect": connect_timeout_seconds,
+            "read": read_timeout_seconds,
+            "write": write_timeout_seconds,
+            "pool": pool_timeout_seconds,
+            "overall": overall_timeout_seconds,
+        }.items():
+            require(value > 0, f"razorpay.{name}_timeout_positive", f"{name} timeout must be > 0")
+
         self.key_id = key_id
-        # Never logged, never serialized, never returned.
         self._key_secret = key_secret
         self._webhook_secret = webhook_secret
         self._http = http_client
-        self._timeout = timeout_seconds
+        self._http_timeout = httpx.Timeout(
+            connect=connect_timeout_seconds,
+            read=read_timeout_seconds,
+            write=write_timeout_seconds,
+            pool=pool_timeout_seconds,
+        )
+        self._overall_timeout = overall_timeout_seconds
 
     def __repr__(self) -> str:
-        """Redacted by construction, so a stray log line cannot leak a secret."""
-        return f"<RazorpayTestPaymentProvider key_id={self.key_id!r} secret=REDACTED>"
+        return f"<RazorpayTestPaymentProvider key_id={self.key_id!r} secrets=REDACTED>"
 
-    # ------------------------------------------------------------------ #
-    # Orders API
-    # ------------------------------------------------------------------ #
-    def _require_client(self) -> Any:
-        if self._http is None:
-            raise ProviderTransientError(
-                self.name, "no HTTP client configured for the Razorpay adapter"
-            )
-        return self._http
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        """Perform one bounded request without ever placing credentials in a URL."""
+
+        async def send() -> Any:
+            if self._http is not None:
+                call = getattr(self._http, method.lower())
+                kwargs: dict[str, Any] = {
+                    "auth": (self.key_id, self._key_secret),
+                    "timeout": self._http_timeout,
+                }
+                if json_body is not None:
+                    kwargs["json"] = json_body
+                if params is not None:
+                    kwargs["params"] = params
+                return await call(f"{API_BASE}{path}", **kwargs)
+
+            async with httpx.AsyncClient(
+                base_url=API_BASE,
+                auth=httpx.BasicAuth(self.key_id, self._key_secret),
+                timeout=self._http_timeout,
+                headers={"Accept": "application/json"},
+            ) as client:
+                return await client.request(method, path, json=json_body, params=params)
+
+        try:
+            async with asyncio.timeout(self._overall_timeout):
+                return await send()
+        except (TimeoutError, OSError, httpx.HTTPError) as exc:
+            # Deliberately no exception string: transport messages may contain
+            # implementation details. The type is enough for stable diagnosis.
+            raise ProviderTimeout(
+                self.name, f"bounded {method.upper()} transport failure ({type(exc).__name__})"
+            ) from exc
 
     @staticmethod
-    def _to_paise(amount_inr: int) -> int:
-        """Razorpay amounts are in the smallest currency unit."""
-        return amount_inr * 100
+    def _status_code(response: Any) -> int:
+        try:
+            return int(response.status_code)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError("response has no valid HTTP status") from exc
 
-    def _order_to_payment(self, order: dict) -> ProviderPayment:
-        """Translate a Razorpay order into PACTRA's vocabulary.
+    @staticmethod
+    def _json_object(response: Any) -> dict[str, Any]:
+        try:
+            parsed = response.json()
+        except Exception as exc:  # noqa: BLE001 - provider JSON is untrusted
+            raise ValueError("response body is not valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("response body is not a JSON object")
+        return parsed
 
-        An unrecognised status maps to PENDING rather than to a guess: reporting
-        an order PACTRA does not understand as succeeded or failed would be
-        inventing an outcome. PENDING keeps it in reconciliation, which is the
-        honest place for something not yet understood.
-        """
-        status = _ORDER_STATUS_MAP.get(str(order.get("status", "")), ProviderPaymentStatus.PENDING)
+    @staticmethod
+    def _whole_rupees(value: Any, *, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{field} is not a non-negative integer")
+        if value % 100 != 0:
+            raise ValueError(f"{field} cannot be represented as whole INR")
+        return value // 100
+
+    @staticmethod
+    def _non_negative_int(value: Any, *, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{field} is not a non-negative integer")
+        return value
+
+    def _order_to_payment(
+        self,
+        order: dict[str, Any],
+        *,
+        expected_idempotency_key: str | None,
+    ) -> ProviderPayment:
+        order_id = order.get("id")
+        if not isinstance(order_id, str) or not order_id.startswith("order_"):
+            raise ValueError("order id is missing or malformed")
+        if order.get("entity") != "order":
+            raise ValueError("response entity is not an order")
+
+        raw_status = order.get("status")
+        if not isinstance(raw_status, str) or not raw_status:
+            raise ValueError("order status is missing or malformed")
+        amount_inr = self._whole_rupees(order.get("amount"), field="order.amount")
+        currency = order.get("currency")
+        if not isinstance(currency, str) or len(currency) != 3:
+            raise ValueError("order currency is missing or malformed")
+        receipt = order.get("receipt")
+        if not isinstance(receipt, str) or not receipt:
+            raise ValueError("order receipt is missing or malformed")
+        if expected_idempotency_key is not None:
+            expected_receipt = receipt_for_idempotency_key(expected_idempotency_key)
+            if not hmac.compare_digest(receipt, expected_receipt):
+                raise ValueError("order receipt does not match the requested logical payment")
+        attempts = self._non_negative_int(order.get("attempts"), field="order.attempts")
+
         return ProviderPayment(
             provider=self.name,
-            provider_payment_id=str(order["id"]),
-            status=status,
-            # Razorpay reports paise; PACTRA's domain is whole INR.
-            amount_inr=int(order.get("amount", 0)) // 100,
-            currency=str(order.get("currency", "INR")),
-            idempotency_key=order.get("receipt"),
-            idempotent_replay=False,
+            provider_payment_id=order_id,
+            provider_order_id=order_id,
+            status=_ORDER_STATUS_MAP.get(raw_status, ProviderPaymentStatus.PENDING),
+            amount_inr=amount_inr,
+            currency=currency,
+            idempotency_key=expected_idempotency_key,
+            provider_receipt=receipt,
+            provider_status=raw_status,
+            provider_attempts=attempts,
         )
 
-    async def create_payment(self, request: PaymentRequest) -> ProviderPayment:
-        """Create a Razorpay Order (test mode).
-
-        NOTE: this creates an ORDER, not a captured payment. See the module
-        docstring — the adapter is ``partial`` and does not claim otherwise.
-        """
-        client = self._require_client()
-        payload = {
-            "amount": self._to_paise(request.amount_inr),
-            "currency": request.currency,
-            # PACTRA's idempotency key. Razorpay does not enforce uniqueness on
-            # this field, so it is a correlation handle for reconciliation, not
-            # a provider-side idempotency guarantee.
-            "receipt": request.idempotency_key,
-            "notes": {"pactra_txn": request.transaction_digest_prefix},
-        }
+    async def _attach_captured_payment(self, payment: ProviderPayment) -> ProviderPayment:
+        """Resolve the real ``pay_...`` id for an Order Razorpay calls paid."""
+        response = await self._request("GET", f"/orders/{payment.provider_payment_id}/payments")
         try:
-            response = await client.post(
-                f"{API_BASE}/orders",
-                json=payload,
-                auth=(self.key_id, self._key_secret),
-                timeout=self._timeout,
+            status_code = self._status_code(response)
+        except ValueError as exc:
+            raise ProviderTransientError(
+                self.name, f"malformed HTTP response while fetching captured payment: {exc}"
+            ) from exc
+        if not 200 <= status_code < 300:
+            raise ProviderTransientError(
+                self.name, f"HTTP {status_code} while fetching payments for paid order"
             )
-        except Exception as exc:
-            # Any transport failure is UNCERTAIN, never a failure: the order may
-            # have been created before the response was lost. Collapsing this
-            # into "failed" is the duplicate-charge bug.
-            raise ProviderTimeout(self.name, f"transport error: {type(exc).__name__}") from exc
+        try:
+            parsed = self._json_object(response)
+            items = parsed.get("items")
+            if not isinstance(items, list):
+                raise ValueError("payments collection has no items list")
+            captured: list[str] = []
+            for item in items:
+                if not isinstance(item, dict) or item.get("status") != "captured":
+                    continue
+                payment_id = item.get("id")
+                if not isinstance(payment_id, str) or not payment_id.startswith("pay_"):
+                    raise ValueError("captured payment id is malformed")
+                if item.get("order_id") != payment.provider_order_id:
+                    raise ValueError("captured payment names a different order")
+                amount = self._whole_rupees(item.get("amount"), field="payment.amount")
+                if amount != payment.amount_inr or item.get("currency") != payment.currency:
+                    raise ValueError("captured payment amount or currency mismatches its order")
+                captured.append(payment_id)
+        except ValueError as exc:
+            raise ProviderTransientError(self.name, f"malformed payments response: {exc}") from exc
 
-        return self._interpret_create(response)
+        if len(captured) != 1:
+            raise ProviderTransientError(
+                self.name,
+                f"paid order exposes {len(captured)} matching captured payments; "
+                "expected exactly one",
+            )
+        return payment.model_copy(update={"provider_transaction_id": captured[0]})
 
-    def _interpret_create(self, response: Any) -> ProviderPayment:
-        status_code = int(response.status_code)
+    @staticmethod
+    def _duplicate_receipt_response(response: Any) -> bool:
+        try:
+            parsed = response.json()
+        except Exception:  # noqa: BLE001 - only classification, never trust
+            return False
+        error = parsed.get("error") if isinstance(parsed, dict) else None
+        if not isinstance(error, dict):
+            return False
+        description = error.get("description")
+        if not isinstance(description, str):
+            return False
+        lowered = description.lower()
+        return "receipt" in lowered and ("already" in lowered or "unique" in lowered)
+
+    async def create_payment(self, request: PaymentRequest) -> ProviderPayment:
+        """Create a real Razorpay TEST Order, never a server-side card payment."""
+        receipt = receipt_for_idempotency_key(request.idempotency_key)
+        payload = {
+            "amount": request.amount_inr * 100,
+            "currency": request.currency,
+            "receipt": receipt,
+            "notes": {
+                "pactra_txn": request.transaction_digest_prefix,
+                "pactra_idem": hashlib.sha256(request.idempotency_key.encode("utf-8")).hexdigest()[
+                    :16
+                ],
+            },
+        }
+        response = await self._request("POST", "/orders", json_body=payload)
+        try:
+            status_code = self._status_code(response)
+        except ValueError as exc:
+            raise ProviderTimeout(self.name, f"ambiguous malformed create response: {exc}") from exc
+
         if 200 <= status_code < 300:
-            return self._order_to_payment(response.json())
-        if status_code == 429 or status_code >= 500:
-            raise ProviderTransientError(self.name, f"HTTP {status_code} from Razorpay")
-        # 4xx other than rate limiting: Razorpay answered and refused.
+            try:
+                payment = self._order_to_payment(
+                    self._json_object(response),
+                    expected_idempotency_key=request.idempotency_key,
+                )
+            except ValueError as exc:
+                # Razorpay may have created the Order before returning an
+                # unusable response. Reconciliation, never a blind retry.
+                raise ProviderTimeout(
+                    self.name, f"ambiguous malformed create response: {exc}"
+                ) from exc
+            if payment.status is ProviderPaymentStatus.SUCCEEDED:
+                return await self._attach_captured_payment(payment)
+            return payment
+
+        if status_code >= 500:
+            raise ProviderTimeout(
+                self.name, f"ambiguous HTTP {status_code} response to order creation"
+            )
+        if status_code == 429:
+            raise ProviderTransientError(self.name, "HTTP 429 from Razorpay")
+        if status_code == 400 and self._duplicate_receipt_response(response):
+            raise ProviderTimeout(
+                self.name, "duplicate receipt response requires Order reconciliation"
+            )
         raise ProviderTerminalError(self.name, f"HTTP {status_code} from Razorpay")
 
     async def get_payment(
@@ -224,152 +362,227 @@ class RazorpayTestPaymentProvider:
         provider_payment_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> ProviderPayment | None:
-        """Look an order up by id, or by the receipt PACTRA set.
-
-        The receipt lookup is what closes the lost-response gap: after a create
-        whose response never arrived, the receipt is the only handle PACTRA has.
-        """
-        client = self._require_client()
-        try:
-            if provider_payment_id is not None:
-                response = await client.get(
-                    f"{API_BASE}/orders/{provider_payment_id}",
-                    auth=(self.key_id, self._key_secret),
-                    timeout=self._timeout,
-                )
-                if int(response.status_code) == 404:
-                    return None
-                if not 200 <= int(response.status_code) < 300:
-                    raise ProviderTransientError(
-                        self.name, f"HTTP {response.status_code} from Razorpay"
-                    )
-                return self._order_to_payment(response.json())
-
-            if idempotency_key is None:
-                return None
-
-            response = await client.get(
-                f"{API_BASE}/orders",
-                params={"receipt": idempotency_key},
-                auth=(self.key_id, self._key_secret),
-                timeout=self._timeout,
-            )
-        except ProviderTransientError:
-            raise
-        except Exception as exc:
-            raise ProviderTransientError(
-                self.name, f"transport error: {type(exc).__name__}"
-            ) from exc
-
-        if not 200 <= int(response.status_code) < 300:
-            raise ProviderTransientError(self.name, f"HTTP {response.status_code} from Razorpay")
-
-        items = response.json().get("items") or []
-        if not items:
-            # The provider positively holds nothing for this receipt.
+        """Fetch an Order by id or recover it by the deterministic receipt."""
+        if provider_payment_id is None and idempotency_key is None:
             return None
-        if len(items) > 1:
-            # Razorpay does not enforce receipt uniqueness (see limitation 1),
-            # so this list CAN come back with more than one order. Picking the
-            # first would resolve the lookup by discarding the evidence that
-            # two orders exist for one logical payment — precisely the
-            # duplicate Phase 4 is built to prevent. Raising keeps the intent
-            # uncertain and routes it to a human instead of quietly adopting an
-            # arbitrary one of the two.
-            raise ProviderTransientError(
-                self.name,
-                f"{len(items)} Razorpay orders share receipt {idempotency_key!r}; "
-                "refusing to adopt one arbitrarily",
-            )
-        return self._order_to_payment(items[0])
 
-    # ------------------------------------------------------------------ #
-    # Webhooks — this part IS faithful to documented Razorpay behaviour
-    # ------------------------------------------------------------------ #
-    def verify_webhook(self, *, body: bytes, signature: str) -> VerifiedWebhookEvent:
-        """Verify ``X-Razorpay-Signature``.
+        if provider_payment_id is not None:
+            response = await self._request("GET", f"/orders/{provider_payment_id}")
+            try:
+                status_code = self._status_code(response)
+            except ValueError as exc:
+                raise ProviderTransientError(
+                    self.name, f"malformed HTTP response while fetching Razorpay Order: {exc}"
+                ) from exc
+            if status_code == 404:
+                return None
+            if not 200 <= status_code < 300:
+                raise ProviderTransientError(
+                    self.name, f"HTTP {status_code} while fetching Razorpay Order"
+                )
+            try:
+                payment = self._order_to_payment(
+                    self._json_object(response),
+                    expected_idempotency_key=idempotency_key,
+                )
+            except ValueError as exc:
+                raise ProviderTransientError(
+                    self.name, f"malformed Order lookup response: {exc}"
+                ) from exc
+        else:
+            assert idempotency_key is not None
+            receipt = receipt_for_idempotency_key(idempotency_key)
+            response = await self._request("GET", "/orders", params={"receipt": receipt})
+            try:
+                status_code = self._status_code(response)
+            except ValueError as exc:
+                raise ProviderTransientError(
+                    self.name, f"malformed HTTP response while searching Razorpay Orders: {exc}"
+                ) from exc
+            if not 200 <= status_code < 300:
+                raise ProviderTransientError(
+                    self.name, f"HTTP {status_code} while searching Razorpay Orders"
+                )
+            try:
+                parsed = self._json_object(response)
+                items = parsed.get("items")
+                if not isinstance(items, list):
+                    raise ValueError("orders collection has no items list")
+                exact = [
+                    item
+                    for item in items
+                    if isinstance(item, dict) and item.get("receipt") == receipt
+                ]
+                if not exact:
+                    return None
+                if len(exact) > 1:
+                    raise ProviderTransientError(
+                        self.name,
+                        f"{len(exact)} Razorpay Orders share one PACTRA receipt; "
+                        "refusing ambiguity",
+                    )
+                payment = self._order_to_payment(exact[0], expected_idempotency_key=idempotency_key)
+            except ProviderTransientError:
+                raise
+            except ValueError as exc:
+                raise ProviderTransientError(
+                    self.name, f"malformed Order search response: {exc}"
+                ) from exc
 
-        Razorpay documents this as the hex-encoded HMAC-SHA256 of the RAW
-        request body under the webhook secret. Recomputed over the exact bytes
-        received — re-serializing first would change them — and compared in
-        constant time.
-        """
+        if payment.status is ProviderPaymentStatus.SUCCEEDED:
+            return await self._attach_captured_payment(payment)
+        return payment
+
+    def verify_webhook(
+        self,
+        *,
+        body: bytes,
+        signature: str,
+        provider_event_id: str | None = None,
+    ) -> VerifiedWebhookEvent:
+        """Verify raw-body HMAC and parse only supported Razorpay events."""
         expected = hmac.new(self._webhook_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, signature):
             raise WebhookVerificationError(self.name, "X-Razorpay-Signature does not match")
+        if not provider_event_id:
+            raise WebhookVerificationError(
+                self.name,
+                "X-Razorpay-Event-Id is required for idempotent delivery",
+                reason_code="WEBHOOK_EVENT_ID_MISSING",
+            )
 
-        # Parsed only after the MAC verifies.
         try:
             parsed = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise WebhookVerificationError(self.name, "body is not valid JSON") from exc
+            raise WebhookVerificationError(
+                self.name,
+                "body is not valid JSON",
+                reason_code="WEBHOOK_PAYLOAD_INVALID",
+            ) from exc
         if not isinstance(parsed, dict):
-            raise WebhookVerificationError(self.name, "body is not a JSON object")
-
-        razorpay_event = str(parsed.get("event", ""))
-        event_type = _WEBHOOK_EVENT_MAP.get(razorpay_event)
-        if event_type is None:
-            # An undocumented or unmapped event is refused, not guessed at.
             raise WebhookVerificationError(
-                self.name, f"unsupported Razorpay event '{razorpay_event}'"
+                self.name,
+                "body is not a JSON object",
+                reason_code="WEBHOOK_PAYLOAD_INVALID",
             )
 
-        order_id = _extract_order_id(parsed)
-        if order_id is None:
+        event_name = parsed.get("event")
+        if event_name not in {
+            "payment.authorized",
+            "payment.captured",
+            "payment.failed",
+            "order.paid",
+        }:
             raise WebhookVerificationError(
-                self.name, "webhook payload names no order to correlate against"
+                self.name,
+                f"unsupported Razorpay event {event_name!r}",
+                reason_code="WEBHOOK_PAYLOAD_INVALID",
             )
 
-        event_id = parsed.get("id") or parsed.get("event_id")
-        if not event_id:
-            # Without a provider event id there is nothing to deduplicate on,
-            # and a webhook that cannot be deduplicated cannot be idempotent.
-            raise WebhookVerificationError(self.name, "webhook payload carries no event id")
+        try:
+            evidence = self._webhook_evidence(parsed, str(event_name))
+            occurred_at = parsed.get("created_at")
+            occurred = (
+                datetime.fromtimestamp(occurred_at, tz=timezone.utc)
+                if isinstance(occurred_at, int) and not isinstance(occurred_at, bool)
+                else None
+            )
+            return VerifiedWebhookEvent(
+                provider=self.name,
+                provider_event_id=provider_event_id,
+                occurred_at=occurred,
+                sequence=None,
+                **evidence,
+            )
+        except (TypeError, ValueError) as exc:
+            raise WebhookVerificationError(
+                self.name,
+                f"malformed signed Razorpay event: {exc}",
+                reason_code="WEBHOOK_PAYLOAD_INVALID",
+            ) from exc
 
-        return VerifiedWebhookEvent(
-            provider=self.name,
-            provider_event_id=str(event_id),
-            event_type=event_type,
-            provider_payment_id=order_id,
-            sequence=None,
-        )
+    def _webhook_evidence(self, parsed: dict[str, Any], event_name: str) -> dict[str, Any]:
+        payload = parsed.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("payload is missing")
 
+        payment_wrapper = payload.get("payment")
+        payment = payment_wrapper.get("entity") if isinstance(payment_wrapper, dict) else None
+        if not isinstance(payment, dict):
+            raise ValueError("payment entity is missing")
 
-def _extract_order_id(payload: dict) -> str | None:
-    """Pull the order id out of a Razorpay webhook envelope.
+        payment_id = payment.get("id")
+        order_id = payment.get("order_id")
+        status = payment.get("status")
+        currency = payment.get("currency")
+        if not isinstance(payment_id, str) or not payment_id.startswith("pay_"):
+            raise ValueError("payment id is malformed")
+        if not isinstance(order_id, str) or not order_id.startswith("order_"):
+            raise ValueError("payment order_id is malformed")
+        if not isinstance(status, str) or not status:
+            raise ValueError("payment status is missing")
+        if not isinstance(currency, str) or len(currency) != 3:
+            raise ValueError("payment currency is malformed")
+        amount_inr = self._whole_rupees(payment.get("amount"), field="payment.amount")
 
-    Razorpay nests entities under ``payload.<entity>.entity``. Only the two
-    shapes this adapter maps are read; anything else returns None and the
-    webhook is refused rather than partially understood.
-    """
-    entities = payload.get("payload")
-    if not isinstance(entities, dict):
-        return None
-    for key in ("order", "payment"):
-        wrapper = entities.get(key)
-        if not isinstance(wrapper, dict):
-            continue
-        entity = wrapper.get("entity")
-        if not isinstance(entity, dict):
-            continue
-        order_id = entity.get("id") if key == "order" else entity.get("order_id")
-        if order_id:
-            return str(order_id)
-    return None
+        event_types = {
+            "payment.authorized": WebhookEventType.PAYMENT_PENDING,
+            "payment.captured": WebhookEventType.PAYMENT_SUCCEEDED,
+            "payment.failed": WebhookEventType.PAYMENT_ATTEMPT_FAILED,
+            "order.paid": WebhookEventType.PAYMENT_SUCCEEDED,
+        }
+        required_status = {
+            "payment.authorized": "authorized",
+            "payment.captured": "captured",
+            "payment.failed": "failed",
+            "order.paid": "captured",
+        }[event_name]
+        if status != required_status:
+            raise ValueError(
+                f"{event_name} carries payment status {status!r}, expected {required_status!r}"
+            )
+        if event_name in {"payment.captured", "order.paid"} and payment.get("captured") is not True:
+            raise ValueError("success event does not carry captured=true")
+
+        attempts: int | None = None
+        if event_name == "order.paid":
+            order_wrapper = payload.get("order")
+            order = order_wrapper.get("entity") if isinstance(order_wrapper, dict) else None
+            if not isinstance(order, dict):
+                raise ValueError("order.paid has no order entity")
+            if order.get("id") != order_id or order.get("status") != "paid":
+                raise ValueError("order.paid entities disagree on Order identity or status")
+            order_amount = self._whole_rupees(order.get("amount"), field="order.amount")
+            if order_amount != amount_inr or order.get("currency") != currency:
+                raise ValueError("order.paid entities disagree on amount or currency")
+            attempts = self._non_negative_int(order.get("attempts"), field="order.attempts")
+
+        return {
+            "event_type": event_types[event_name],
+            # Generic durable correlation remains the Order id.
+            "provider_payment_id": order_id,
+            "provider_order_id": order_id,
+            "provider_transaction_id": payment_id,
+            "amount_inr": amount_inr,
+            "currency": currency,
+            "provider_status": status,
+            "provider_attempts": attempts,
+        }
 
 
 def from_environment(http_client: Any = None) -> RazorpayTestPaymentProvider:
-    """Build the adapter from environment variables only.
+    """Build from central environment/.env settings with redacted SecretStr values."""
+    from apps.api.pactra.config import Settings
 
-    There is no source-code default for either secret. A missing secret raises
-    rather than falling back, because a fallback would be a credential in the
-    repository.
-    """
-    import os
-
+    settings = Settings()
     return RazorpayTestPaymentProvider(
-        key_id=os.environ.get("RAZORPAY_KEY_ID", ""),
-        key_secret=os.environ.get("RAZORPAY_KEY_SECRET", ""),
-        webhook_secret=os.environ.get("RAZORPAY_WEBHOOK_SECRET", ""),
+        key_id=settings.razorpay_key_id,
+        key_secret=settings.razorpay_key_secret.get_secret_value(),
+        webhook_secret=settings.razorpay_webhook_secret.get_secret_value(),
         http_client=http_client,
+        connect_timeout_seconds=settings.razorpay_connect_timeout_seconds,
+        read_timeout_seconds=settings.razorpay_read_timeout_seconds,
+        write_timeout_seconds=settings.razorpay_write_timeout_seconds,
+        pool_timeout_seconds=settings.razorpay_pool_timeout_seconds,
+        overall_timeout_seconds=settings.razorpay_overall_timeout_seconds,
     )

@@ -15,15 +15,17 @@ Four possible answers, four honest conclusions::
     SUCCEEDED  -> link the provider payment, state SUCCEEDED
     FAILED     -> state FAILED_TERMINAL
     PENDING    -> still genuinely unresolved; poll again with backoff
-    not found  -> the provider holds NOTHING for this key, so no payment was
-                  ever created and re-creating one cannot duplicate anything.
-                  Only here does the intent become retryable again.
+    not found  -> before any provider id was linked, the provider holds NOTHING
+                  for this key, so re-creating cannot duplicate anything. Once
+                  an id was linked, not-found is only an unresolved provider
+                  inconsistency and can never license a replacement payment.
 
 The last line is the crux. FAILED_RETRYABLE is reachable from
 PROVIDER_PENDING through exactly one route — a provider that positively reports
-holding no payment. There is no timeout, no elapsed timer, and no attempt count
-that promotes an uncertain payment back to retryable, because none of those is
-evidence about whether money moved.
+holding no payment for the durable idempotency key *before* PACTRA ever linked
+a provider object. There is no timeout, no elapsed timer, no attempt count, and
+no later failure to fetch a once-linked id that promotes an uncertain payment
+back to retryable, because none of those is evidence about whether money moved.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from datetime import datetime
 from apps.api.db.models import OutboxEventRow, PaymentIntentRow
 from packages.schemas.capability import Capability, CapabilitySet
 from packages.schemas.domain import EventType, ReasonCode, as_utc, utcnow
-from packages.schemas.payment import PaymentIntentState, ProviderPaymentStatus
+from packages.schemas.payment import PaymentIntentState
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.audit_ledger.ledger import append_event
@@ -42,6 +44,7 @@ from services.payment_executor.executor import (
     DispatchResult,
     apply_provider_payment,
     lock_payment_intent,
+    provider_evidence_payload,
     validate_provider_route,
 )
 from services.payment_executor.outbox import complete_event, reschedule_event
@@ -112,6 +115,53 @@ async def reconcile_intent(
         return DispatchResult(state=current, provider_called=True, retry_scheduled=retried)
 
     if payment is None:
+        if intent.provider_payment_id is not None:
+            # A provider reference was already durably observed. Losing the
+            # ability to fetch it (retention window, provider inconsistency,
+            # temporary index lag) is not evidence that it never existed, so it
+            # can NEVER license a replacement Order. Keep uncertainty and poll
+            # until the retry budget dead-letters for operator attention.
+            retried = await reschedule_event(
+                session,
+                event=event,
+                reason="linked provider reference was not found",
+                now=moment,
+            )
+            await append_event(
+                session,
+                mission_id=intent.mission_id,
+                event_type=EventType.PAYMENT_RECONCILED,
+                actor=ACTOR,
+                payload={
+                    "payment_intent_id": str(intent.id),
+                    "provider": intent.provider,
+                    "provider_payment_id": intent.provider_payment_id,
+                    "reason_code": ReasonCode.PROVIDER_PAYMENT_NOT_FOUND.value,
+                    "linked_provider_reference_unresolved": True,
+                    "replacement_create_permitted": False,
+                },
+            )
+            await append_event(
+                session,
+                mission_id=intent.mission_id,
+                event_type=(
+                    EventType.PAYMENT_RETRY_SCHEDULED
+                    if retried
+                    else EventType.OUTBOX_EVENT_DEAD_LETTERED
+                ),
+                actor=ACTOR,
+                payload={
+                    "payment_intent_id": str(intent.id),
+                    "outbox_event_id": str(event.id),
+                    "reason_code": ReasonCode.PROVIDER_PAYMENT_NOT_FOUND.value,
+                    "phase": "linked-reference-reconciliation",
+                },
+            )
+            return DispatchResult(
+                state=current,
+                provider_called=True,
+                retry_scheduled=retried,
+            )
         return await _resolve_no_provider_payment(
             session, intent=intent, event=event, now=moment, current=current
         )
@@ -154,13 +204,12 @@ async def reconcile_intent(
         payload={
             "payment_intent_id": str(intent.id),
             "provider": intent.provider,
-            "provider_payment_id": payment.provider_payment_id,
-            "provider_status": payment.status.value,
+            **provider_evidence_payload(payment),
+            "provider_state": payment.status.value,
             "state": state.value,
             # True whenever the provider handed back a payment it already held
             # — i.e. the lost-response case resolved onto the original payment.
-            "resolved_existing_provider_payment": payment.status
-            is not ProviderPaymentStatus.CREATED,
+            "resolved_existing_provider_payment": True,
         },
     )
 

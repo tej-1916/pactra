@@ -141,7 +141,15 @@ class PaymentIntentOut(BaseModel):
     currency: str
     merchant_id: str
     provider: str
+    #: Public test key used by Razorpay Checkout. Never a secret; present only
+    #: for Razorpay test intents.
+    provider_key_id: str | None
     provider_payment_id: str | None
+    provider_order_id: str | None
+    provider_transaction_id: str | None
+    provider_receipt: str | None
+    provider_status: str | None
+    provider_attempts: int | None
     attempts: int
     last_reason_code: str | None
     created_at: datetime

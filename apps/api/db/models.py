@@ -269,12 +269,20 @@ class PaymentIntentRow(Base):
         UniqueConstraint("idempotency_key", name="uq_payment_intents_idempotency_key"),
         UniqueConstraint("authorization_id", name="uq_payment_intents_authorization_id"),
         UniqueConstraint("provider_payment_id", name="uq_payment_intents_provider_payment_id"),
+        UniqueConstraint("provider_order_id", name="uq_payment_intents_provider_order_id"),
+        UniqueConstraint(
+            "provider_transaction_id", name="uq_payment_intents_provider_transaction_id"
+        ),
         CheckConstraint(
             "state <> 'SUCCEEDED' OR provider_payment_id IS NOT NULL",
             name="ck_payment_intents_succeeded_has_provider_id",
         ),
         CheckConstraint("amount_inr >= 1", name="ck_payment_intents_amount_positive"),
         CheckConstraint("attempts >= 0", name="ck_payment_intents_attempts_non_negative"),
+        CheckConstraint(
+            "provider_attempts IS NULL OR provider_attempts >= 0",
+            name="ck_payment_intents_provider_attempts_non_negative",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -295,7 +303,17 @@ class PaymentIntentRow(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     merchant_id: Mapped[str] = mapped_column(String(120), nullable=False)
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    # Generic provider reference retained for backwards compatibility. For
+    # Razorpay it is the Order id, which is the stable object PACTRA creates and
+    # the handle every payment webhook carries through ``order_id``.
     provider_payment_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    provider_order_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # The real Razorpay ``pay_...`` id, populated only when provider evidence
+    # identifies the successful/authorized payment associated with the Order.
+    provider_transaction_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    provider_receipt: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    provider_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     state: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_reason_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -380,6 +398,9 @@ class WebhookEventRow(Base):
     provider_event_id: Mapped[str] = mapped_column(String(200), nullable=False)
     event_type: Mapped[str] = mapped_column(String(40), nullable=False)
     provider_payment_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    # A Razorpay webhook correlates locally by Order id but carries its actual
+    # ``pay_...`` id as separate durable evidence.
+    provider_transaction_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     payment_intent_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("payment_intents.id", ondelete="CASCADE"), nullable=True, index=True
     )

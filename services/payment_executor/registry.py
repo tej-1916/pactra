@@ -31,6 +31,13 @@ WEBHOOK_SIGNATURE_HEADERS: dict[str, str] = {
     RAZORPAY_NAME: "x-razorpay-signature",
 }
 
+# Razorpay documents webhook idempotency on this transport header. It is
+# deliberately separate from the signature header and is never accepted as a
+# substitute for a valid signature.
+WEBHOOK_EVENT_ID_HEADERS: dict[str, str] = {
+    RAZORPAY_NAME: "x-razorpay-event-id",
+}
+
 
 class UnknownProvider(Exception):
     """No adapter is registered under this name."""
@@ -92,3 +99,10 @@ def signature_header_for(name: str) -> str:
     if header is None:
         raise UnknownProvider(name)
     return header
+
+
+def event_id_header_for(name: str) -> str | None:
+    """Return the provider's delivery-id header, if that provider has one."""
+    if name not in WEBHOOK_SIGNATURE_HEADERS:
+        raise UnknownProvider(name)
+    return WEBHOOK_EVENT_ID_HEADERS.get(name)

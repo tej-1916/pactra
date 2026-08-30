@@ -35,6 +35,7 @@ from packages.schemas.payment import (
     PaymentIntentState,
     PaymentRequest,
     ProviderPayment,
+    ProviderPaymentStatus,
     provider_status_to_state,
 )
 from sqlalchemy import select
@@ -175,16 +176,50 @@ async def link_provider_payment(
     instead of overwriting. Overwriting would hide the duplicate and leave the
     first charge unreferenced.
     """
-    if intent.provider_payment_id is None:
-        intent.provider_payment_id = payment.provider_payment_id
-        await session.flush()
-        return
-    if intent.provider_payment_id != payment.provider_payment_id:
-        raise ValueError(
-            f"payment intent {intent.id} is already linked to provider payment "
-            f"{intent.provider_payment_id}; refusing to relink to "
-            f"{payment.provider_payment_id}"
+
+    def assign_once(attribute: str, value: str | None, label: str) -> None:
+        if value is None:
+            return
+        existing = getattr(intent, attribute)
+        if existing is None:
+            setattr(intent, attribute, value)
+        elif existing != value:
+            raise ProviderPaymentMismatch(
+                intent.provider,
+                f"intent already records {label}={existing!r}; refusing to relink to {value!r}",
+            )
+
+    assign_once("provider_payment_id", payment.provider_payment_id, "provider reference")
+    assign_once("provider_order_id", payment.provider_order_id, "provider order id")
+    assign_once("provider_receipt", payment.provider_receipt, "provider receipt")
+    # Only a captured/successful provider answer makes a pay_... id the durable
+    # settlement identity. Failed Checkout attempts have their own ids too, but
+    # those belong in webhook evidence and must not block a later successful
+    # attempt on the same Razorpay Order.
+    if payment.status is ProviderPaymentStatus.SUCCEEDED:
+        assign_once(
+            "provider_transaction_id",
+            payment.provider_transaction_id,
+            "provider transaction id",
         )
+    if payment.provider_status is not None:
+        intent.provider_status = payment.provider_status
+    if payment.provider_attempts is not None:
+        intent.provider_attempts = max(intent.provider_attempts or 0, payment.provider_attempts)
+    await session.flush()
+
+
+def provider_evidence_payload(payment: ProviderPayment) -> dict[str, str | int]:
+    """Allow-list safe provider evidence for audit payloads."""
+    evidence: dict[str, str | int | None] = {
+        "provider_payment_id": payment.provider_payment_id,
+        "provider_order_id": payment.provider_order_id,
+        "provider_transaction_id": payment.provider_transaction_id,
+        "provider_receipt": payment.provider_receipt,
+        "provider_status": payment.provider_status,
+        "provider_attempts": payment.provider_attempts,
+    }
+    return {key: value for key, value in evidence.items() if value is not None}
 
 
 def validate_provider_payment(
@@ -274,7 +309,7 @@ async def apply_provider_payment(
             event_type=EventType.PAYMENT_SUCCEEDED,
             payload={
                 "provider": intent.provider,
-                "provider_payment_id": payment.provider_payment_id,
+                **provider_evidence_payload(payment),
                 "amount_inr": intent.amount_inr,
                 "currency": intent.currency,
                 "settled_at": moment.isoformat(),
@@ -289,7 +324,7 @@ async def apply_provider_payment(
             event_type=EventType.PAYMENT_FAILED,
             payload={
                 "provider": intent.provider,
-                "provider_payment_id": payment.provider_payment_id,
+                **provider_evidence_payload(payment),
             },
             reason_code=ReasonCode.PROVIDER_TERMINAL_FAILURE.value,
         )
@@ -302,8 +337,8 @@ async def apply_provider_payment(
             event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
             payload={
                 "provider": intent.provider,
-                "provider_payment_id": payment.provider_payment_id,
-                "provider_status": payment.status.value,
+                **provider_evidence_payload(payment),
+                "provider_state": payment.status.value,
             },
         )
     return PaymentIntentState(intent.state)
@@ -521,7 +556,7 @@ async def dispatch_create(
             payload={
                 "payment_intent_id": str(intent.id),
                 "provider": intent.provider,
-                "provider_payment_id": existing.provider_payment_id,
+                **provider_evidence_payload(existing),
                 "state": state.value,
                 "recovered_before_create": True,
             },
