@@ -112,15 +112,15 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
             <span className="relative inline-flex size-2 rounded-full bg-[#9691EC]" />
           </span>
           <span className="font-mono text-[11px] font-bold tracking-wider text-[#BBB9F5] uppercase">
-            LIVE TRANSACTION AUTHORITY GRAPH
+            TRANSACTION AUTHORITY GRAPH
           </span>
         </div>
         <div className="flex items-center gap-2 font-mono text-[10px] text-[#BBB9F5]">
           <span className="px-2 py-0.5 rounded bg-[#202160] border border-[#7771DF]/40 font-semibold text-white">
             DETERMINISTIC CONTROL PLANE
           </span>
-          <span className="hidden sm:inline-flex items-center gap-1 font-bold text-[#059669] bg-[#059669]/15 px-2 py-0.5 rounded">
-            ● LIVE
+          <span className="hidden sm:inline-flex items-center gap-1 font-semibold text-[#BBB9F5] bg-[#202160] px-2 py-0.5 rounded border border-white/10">
+            TRANSACTION PATH
           </span>
         </div>
       </div>
@@ -319,7 +319,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                       <span className="font-mono text-[13px] font-extrabold tracking-tight block leading-none">
                         EXECUTE
                       </span>
-                      <span className="text-[9.5px] font-sans text-[#BBB9F5]">Gate 3 · Payment Settlement</span>
+                      <span className="text-[9.5px] font-sans text-[#BBB9F5]">Gate 3 · Payment Execution</span>
                     </div>
                   </div>
 
@@ -333,7 +333,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                         : "bg-[#202160] text-[#BBB9F5]"
                     )}
                   >
-                    {state.passed ? "SETTLED ✓" : state.active ? "EXECUTING" : "STAGE 3"}
+                    {state.passed ? "DISPATCHED" : state.active ? "EXECUTING" : "STAGE 3"}
                   </span>
                 </div>
               );
@@ -365,7 +365,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                 <CreditCard className="size-4 text-[#9691EC]" />
                 <div>
                   <span className="font-mono text-[11px] font-bold block leading-none">PAYMENT PROVIDER</span>
-                  <span className="text-[8.5px] font-mono text-[#BBB9F5]/80">Razorpay Evidence</span>
+                  <span className="text-[8.5px] font-mono text-[#BBB9F5]/80">Provider Evidence</span>
                 </div>
               </div>
             );

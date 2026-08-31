@@ -59,7 +59,7 @@ verify_payment_intent({
   provider: "razorpay",
   evidence_status: "SUCCEEDED",
   idempotency_key: "idemp_99182a"
-}) => EXECUTE_SETTLED`,
+}) => EXECUTE_VERIFIED`,
       metrics: [
         { label: "Payment Intent", value: "DURABLE", status: "TRACKED" },
         { label: "Reconciliation", value: "IDEMPOTENT", status: "VERIFIED" },
