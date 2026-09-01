@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/Badge";
 import { DataTierBadge } from "@/components/ui/DataTier";
 import { InvariantCard } from "@/components/ui/InvariantCard";
 import { MetricCard } from "@/components/ui/MetricCard";
+import { PageContainer } from "@/components/ui/PageContainer";
 import { Panel } from "@/components/ui/Panel";
 import { ProtocolStatusBadge } from "@/components/ui/StatusBadges";
 import { loadAttackReport, loadRiskEvaluation } from "@/lib/api/reports";
@@ -28,7 +29,7 @@ export default async function OverviewPage() {
   const invariants = headlineInvariants();
 
   return (
-    <div className="space-y-8">
+    <PageContainer variant="standard" className="space-y-8">
       {/* Boot Wireframe Edge-Scan Transition (Initial Hard Load) */}
       <PactraBootReveal />
 
@@ -207,6 +208,6 @@ export default async function OverviewPage() {
           <code className="num">n/a</code> rather than {percent(0)}.
         </p>
       ) : null}
-    </div>
+    </PageContainer>
   );
 }

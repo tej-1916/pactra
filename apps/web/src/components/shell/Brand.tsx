@@ -26,13 +26,23 @@ export function PactraMark({ className }: { className?: string }) {
   );
 }
 
-export function Wordmark({ compact = false }: { compact?: boolean }) {
+export function Wordmark({
+  compact = false,
+  compactText = false,
+}: {
+  compact?: boolean;
+  compactText?: boolean;
+}) {
   return (
     <div className="flex items-center gap-2.5">
       <PactraMark />
-      {compact ? null : (
+      {compact ? null : compactText ? (
+        <span className="font-display text-[16px] font-extrabold tracking-[0.16em] text-[color:var(--color-ink)]">
+          PACTRA
+        </span>
+      ) : (
         <div className="min-w-0 leading-tight">
-          <p className="text-[15px] font-semibold tracking-[0.16em] text-[color:var(--color-ink)]">
+          <p className="font-display text-[15px] font-bold tracking-[0.16em] text-[color:var(--color-ink)]">
             PACTRA
           </p>
           <p className="text-[10px] leading-tight tracking-[0.02em] text-[color:var(--color-ink-4)]">
