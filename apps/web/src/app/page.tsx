@@ -10,6 +10,7 @@ import { AuthorityClaim, StagePipeline } from "@/components/command/StagePipelin
 import { SystemStatus } from "@/components/command/SystemStatus";
 import { Hero } from "@/components/hero/Hero";
 import { DarkProductSection } from "@/components/hero/DarkProductSection";
+import { PactraBootReveal } from "@/components/motion/PactraBootReveal";
 import { Badge } from "@/components/ui/Badge";
 import { DataTierBadge } from "@/components/ui/DataTier";
 import { InvariantCard } from "@/components/ui/InvariantCard";
@@ -28,6 +29,9 @@ export default async function OverviewPage() {
 
   return (
     <div className="space-y-8">
+      {/* Boot Wireframe Edge-Scan Transition (Initial Hard Load) */}
+      <PactraBootReveal />
+
       {/* Step 3 & 4: Deep Indigo Visual Foundation + Hero + Signature Trust Graph */}
       <Hero />
 
