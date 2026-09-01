@@ -1,21 +1,27 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
-import { ArrowUpRight, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 
 import { MissionPicker } from "./MissionPicker";
 import { ProvenanceLegend } from "./ProvenanceLegend";
+import { ScenarioSelector, type RuntimeEvidenceStatus } from "./ScenarioSelector";
+import { DEMO_SCENARIOS, type ScenarioId } from "./demoScenarios";
+import { AiBuyerPanel } from "./AiBuyerPanel";
+import { MerchantOfferPanel } from "./MerchantOfferPanel";
+import { TransactionJourney } from "./TransactionJourney";
+import { AuthoritativeEvidencePanel } from "./AuthoritativeEvidencePanel";
+import { CommerceTraceTimeline } from "./CommerceTraceTimeline";
+
 import { AuthorizationSchemeCard } from "@/components/authorization/AuthorizationScheme";
 import { PaymentReadModel } from "@/components/payment/PaymentReadModel";
 import { DecisionTrace } from "@/components/trace/DecisionTrace";
 import { Badge } from "@/components/ui/Badge";
-import { DataTierBadge } from "@/components/ui/DataTier";
 import { KeyValue, KeyValueGrid } from "@/components/ui/KeyValue";
 import { Panel } from "@/components/ui/Panel";
 import { Authoritative, AuthoritativeField, TaintedText, TaintFindings } from "@/components/ui/Provenance";
 import { ResultBoundary } from "@/components/ui/ResultBoundary";
-import { EmptyState, PartialDataState, RefusalState } from "@/components/ui/States";
+import { EmptyState, PartialDataState } from "@/components/ui/States";
 import {
   AuthorizationStatusBadge,
   MissionStateBadge,
@@ -23,251 +29,308 @@ import {
 } from "@/components/ui/StatusBadges";
 import { cn, inr, timestamp } from "@/lib/format";
 import { useAuthorization, useMission, usePayment, useReplay } from "@/lib/hooks/queries";
-import { describeReasonCode } from "@/lib/reason-codes";
 import type { Mission, Offer } from "@/lib/types/pactra";
 
-/**
- * Live Commerce — READ ONLY.
- *
- * This screen reads one mission end to end and renders nothing it cannot read.
- * There is no checkout here, no payment button, and no simulated provider
- * handoff: the C2 mutations are not implemented, and a control that merely
- * looked ready for them would be the single most misleading thing this console
- * could show a judge. Mission creation and the payment request live on the
- * mission workbench, which is linked rather than duplicated.
- *
- * Every panel is fed by React Query through the `ApiResult` transport, so
- * "still asking", "nothing exists yet", "PACTRA is unreachable" and "a control
- * refused" stay four different screens rather than one grey box.
- */
 export function CommerceConsole() {
+  const [selectedScenario, setSelectedScenario] = useState<ScenarioId>("BENIGN_PURCHASE");
   const [missionId, setMissionId] = useState<string | null>(null);
 
-  const mission = useMission(missionId);
-  const authorization = useAuthorization(missionId);
-  const payment = usePayment(missionId);
-  const replay = useReplay(missionId);
+  const isLiveRuntime = selectedScenario === "LIVE_RUNTIME";
+
+  const mission = useMission(isLiveRuntime ? missionId : null);
+  const authorization = useAuthorization(isLiveRuntime ? missionId : null);
+  const payment = usePayment(isLiveRuntime ? missionId : null);
+  const replay = useReplay(isLiveRuntime ? missionId : null);
+
+  const activeDemo = !isLiveRuntime ? DEMO_SCENARIOS[selectedScenario] : null;
+
+  // Determine runtime evidence status
+  let runtimeStatus: RuntimeEvidenceStatus = "none";
+  if (isLiveRuntime) {
+    if (mission.isPending) {
+      runtimeStatus = "pending";
+    } else if (mission.data?.kind === "unavailable" || mission.data?.kind === "failed") {
+      runtimeStatus = "unavailable";
+    } else if (mission.data?.kind === "ok") {
+      runtimeStatus = "loaded";
+    } else if (missionId === null) {
+      runtimeStatus = "none";
+    }
+  }
 
   return (
-    <div className="space-y-5">
-      <Panel
-        title="Read a mission"
-        subtitle="Everything below is read from the PACTRA API for the mission selected here. No panel on this page can change state."
-        actions={<Badge tone="neutral" variant="outline">READ-ONLY FOUNDATION</Badge>}
-      >
-        <MissionPicker selected={missionId} onSelect={setMissionId} />
-      </Panel>
+    <div className="space-y-6">
+      {/* Top Scenario Selector */}
+      <ScenarioSelector
+        selectedScenario={selectedScenario}
+        onSelectScenario={setSelectedScenario}
+        runtimeStatus={runtimeStatus}
+      />
 
       <ProvenanceLegend />
 
-      {missionId === null ? (
-        <EmptyState
-          title="No mission selected"
-          detail={
+      {/* ----------------- DEMO WORKBENCH VIEW ----------------- */}
+      {activeDemo && (
+        <div className="space-y-6">
+          {/* 3-Column Responsive Workbench Layout */}
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3 items-start">
+            {/* Left Column: Source & Proposal */}
+            <div className="space-y-4">
+              <AiBuyerPanel
+                missionQuery={activeDemo.aiBuyer.missionQuery}
+                constraints={activeDemo.aiBuyer.constraints}
+                candidateId={activeDemo.aiBuyer.candidateId}
+                rationale={activeDemo.aiBuyer.rationale}
+              />
+              <MerchantOfferPanel
+                merchantName={activeDemo.merchantOffer.merchantName}
+                productId={activeDemo.merchantOffer.productId}
+                productTitle={activeDemo.merchantOffer.productTitle}
+                quotedAmountInr={activeDemo.merchantOffer.quotedAmountInr}
+                currency={activeDemo.merchantOffer.currency}
+                offerVersion={activeDemo.merchantOffer.offerVersion}
+                isDemo={true}
+              />
+            </div>
+
+            {/* Center Column: Transaction Journey (ADMIT -> BIND -> EXECUTE) */}
+            <div className="space-y-4">
+              <TransactionJourney scenario={activeDemo} />
+            </div>
+
+            {/* Right Column: Authoritative Transaction & Evidence */}
+            <div className="space-y-4 md:col-span-2 xl:col-span-1">
+              <AuthoritativeEvidencePanel scenario={activeDemo} />
+            </div>
+          </div>
+
+          {/* Bottom Section: Decision Trace Timeline */}
+          <CommerceTraceTimeline
+            entries={activeDemo.decisionTrace}
+            isDemo={true}
+          />
+        </div>
+      )}
+
+      {/* ----------------- LIVE RUNTIME API VIEW ----------------- */}
+      {isLiveRuntime && (
+        <div className="space-y-5">
+          <Panel
+            title="Read a live API mission"
+            subtitle="Select an active mission ID from the PACTRA API. Every panel reads live runtime evidence."
+            actions={
+              runtimeStatus === "loaded" ? (
+                <Badge tone="secure" variant="outline">
+                  RUNTIME EVIDENCE
+                </Badge>
+              ) : runtimeStatus === "pending" ? (
+                <Badge tone="advisory" variant="outline">
+                  AWAITING RUNTIME EVIDENCE
+                </Badge>
+              ) : runtimeStatus === "unavailable" ? (
+                <Badge tone="critical" variant="outline">
+                  RUNTIME EVIDENCE UNAVAILABLE
+                </Badge>
+              ) : (
+                <Badge tone="neutral" variant="outline">
+                  SELECT MISSION
+                </Badge>
+              )
+            }
+          >
+            <MissionPicker selected={missionId} onSelect={setMissionId} />
+          </Panel>
+
+          {missionId === null ? (
+            <EmptyState
+              title="No mission selected"
+              detail={
+                <>
+                  Pick a live mission above, or select an interactive scenario from the scenario bar.
+                </>
+              }
+            />
+          ) : (
             <>
-              Pick a mission above, or{" "}
-              <Link href="/missions" className="text-[color:var(--color-accent)] underline underline-offset-2">
-                run one on the mission workbench
-              </Link>{" "}
-              first. This page reads; it does not create.
+              {/* Mission Summary */}
+              <Panel
+                title="Mission, intent and deterministic policy"
+                subtitle="What was asked for, and what the policy engine decided about it."
+                actions={
+                  runtimeStatus === "loaded" ? (
+                    <Badge tone="secure" variant="outline">
+                      RUNTIME EVIDENCE
+                    </Badge>
+                  ) : null
+                }
+              >
+                <ResultBoundary result={mission.data} isLoading={mission.isPending} what="mission">
+                  {(data) => <MissionSummary mission={data} />}
+                </ResultBoundary>
+              </Panel>
+
+              {/* Offers */}
+              <Panel
+                title="Offers and the selected candidate"
+                subtitle="The ranker selects an offer ID. Amount and payee are reloaded from the authoritative row at BIND."
+                actions={
+                  runtimeStatus === "loaded" ? (
+                    <Badge tone="secure" variant="outline">
+                      RUNTIME EVIDENCE
+                    </Badge>
+                  ) : null
+                }
+              >
+                <ResultBoundary result={mission.data} isLoading={mission.isPending} what="offers">
+                  {(data) => <OfferList mission={data} />}
+                </ResultBoundary>
+              </Panel>
+
+              {/* Authorization */}
+              <Panel
+                title="Authorization"
+                subtitle="POLICY_AUTO is deterministic policy activation; USER_ED25519 is cryptographic user approval."
+                actions={
+                  runtimeStatus === "loaded" ? (
+                    <Badge tone="secure" variant="outline">
+                      RUNTIME EVIDENCE
+                    </Badge>
+                  ) : null
+                }
+              >
+                <ResultBoundary
+                  result={authorization.data}
+                  isLoading={authorization.isPending}
+                  what="authorization"
+                  notFound={
+                    <EmptyState
+                      title="No authorization"
+                      detail="This mission holds no authorization artifact. Nothing is authorized to spend."
+                    />
+                  }
+                >
+                  {(data) => (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <AuthorizationStatusBadge status={data.status} />
+                        <span className="num text-[11px] text-[color:var(--color-ink-4)]">
+                          {data.authorization_id}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+                        <AuthoritativeField
+                          heading="REGISTERED PAYEE (AUTHORITATIVE LOOKUP)"
+                          value={data.bound_merchant_id}
+                          source="Server-registered merchant ID from adapter registration."
+                        />
+                        <AuthoritativeField
+                          heading="BOUND TOTAL"
+                          value={`${inr(data.bound_amount_inr)} ${data.bound_currency}`}
+                          source="Bound machine amount and currency from the reloaded authoritative offer row."
+                        />
+                        <AuthoritativeField
+                          heading="AUTHORIZATION"
+                          value={data.approval_scheme}
+                          source="Approval scheme activation mode."
+                        />
+                        <AuthoritativeField
+                          heading="POLICY"
+                          value={data.policy_version}
+                          source="Policy version covered by canonical transaction digest."
+                        />
+                      </div>
+
+                      <AuthorizationSchemeCard
+                        scheme={data.approval_scheme}
+                        signingKeyId={data.signing_key_id}
+                      />
+
+                      <KeyValueGrid columns={3}>
+                        <KeyValue label="Bound quantity">
+                          <Authoritative>{data.bound_quantity}</Authoritative>
+                        </KeyValue>
+                        <KeyValue label="Bound product">
+                          <TaintedText value={data.bound_product_id} label="Product ID" />
+                        </KeyValue>
+                        <KeyValue label="Binding version">
+                          <Authoritative>{data.binding_version}</Authoritative>
+                        </KeyValue>
+                        <KeyValue label="Offer version">
+                          <Authoritative>{data.offer_version}</Authoritative>
+                        </KeyValue>
+                        <KeyValue label="Issued at">
+                          <Authoritative>{timestamp(data.issued_at)}</Authoritative>
+                        </KeyValue>
+                        <KeyValue label="Expires at">
+                          <Authoritative>{timestamp(data.expires_at)}</Authoritative>
+                        </KeyValue>
+                        <KeyValue label="Transaction digest" className="sm:col-span-2 xl:col-span-2">
+                          <Authoritative className="break-all text-[11px]">
+                            {data.transaction_digest}
+                          </Authoritative>
+                        </KeyValue>
+                      </KeyValueGrid>
+                    </div>
+                  )}
+                </ResultBoundary>
+              </Panel>
+
+              {/* Payment State */}
+              <Panel
+                title="Payment state"
+                subtitle="The durable PaymentIntent as PACTRA holds it."
+                actions={
+                  runtimeStatus === "loaded" ? (
+                    <Badge tone="secure" variant="outline">
+                      RUNTIME EVIDENCE
+                    </Badge>
+                  ) : null
+                }
+              >
+                <ResultBoundary
+                  result={payment.data}
+                  isLoading={payment.isPending}
+                  what="payment intent"
+                  notFound={
+                    <EmptyState
+                      title="No PaymentIntent"
+                      detail="No durable PaymentIntent exists for this mission. An intent is created only when an ACTIVE authorization is consumed."
+                    />
+                  }
+                >
+                  {(data) => <PaymentReadModel intent={data} />}
+                </ResultBoundary>
+              </Panel>
+
+              {/* Decision Trace */}
+              <Panel
+                title="Decision Trace"
+                subtitle="ADMIT → BIND → EXECUTE, projected from the verified hash chain."
+                actions={
+                  runtimeStatus === "loaded" ? (
+                    <Badge tone="secure" variant="outline">
+                      RUNTIME EVIDENCE
+                    </Badge>
+                  ) : null
+                }
+              >
+                <ResultBoundary result={replay.data} isLoading={replay.isPending} what="decision trace">
+                  {(data) =>
+                    data.trusted ? (
+                      <DecisionTrace entries={data.decision_trace} />
+                    ) : (
+                      <PartialDataState
+                        title="No trusted trace for this mission"
+                        detail={`Replay returned trusted: false with reason code ${data.reason_code}.`}
+                      />
+                    )
+                  }
+                </ResultBoundary>
+              </Panel>
             </>
-          }
-        />
-      ) : (
-        <>
-          {/* ------------------------------------------- intent & policy -- */}
-          <Panel
-            title="Mission, intent and deterministic policy"
-            subtitle="What was asked for, and what the policy engine decided about it. The decision is deterministic and it is the authority."
-            actions={<DataTierBadge tier="live" />}
-          >
-            <ResultBoundary result={mission.data} isLoading={mission.isPending} what="mission">
-              {(data) => <MissionSummary mission={data} />}
-            </ResultBoundary>
-          </Panel>
-
-          {/* -------------------------------------------------- offers --- */}
-          <Panel
-            title="Offers and the selected candidate"
-            subtitle="The ranker selects an offer ID and nothing else. Amount, currency and merchant identity are reloaded from the authoritative row at BIND — never taken from what the merchant said."
-            actions={<DataTierBadge tier="live" />}
-          >
-            <ResultBoundary result={mission.data} isLoading={mission.isPending} what="offers">
-              {(data) => <OfferList mission={data} />}
-            </ResultBoundary>
-          </Panel>
-
-          {/* ------------------------------------------- authorization --- */}
-          <Panel
-            title="Authorization"
-            subtitle="What exactly is authorized, and by what. POLICY_AUTO is deterministic policy activation; it is not a person approving anything."
-            actions={<DataTierBadge tier="live" />}
-          >
-            <ResultBoundary
-              result={authorization.data}
-              isLoading={authorization.isPending}
-              what="authorization"
-              notFound={
-                <EmptyState
-                  title="No authorization"
-                  detail="This mission holds no authorization artifact. Nothing is authorized to spend, and no PaymentIntent can exist."
-                />
-              }
-            >
-              {(data) => (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <AuthorizationStatusBadge status={data.status} />
-                    <span className="num text-[11px] text-[color:var(--color-ink-4)]">
-                      {data.authorization_id}
-                    </span>
-                  </div>
-
-                  <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-                    <AuthoritativeField
-                      heading="TOTAL"
-                      value={`${inr(data.bound_amount_inr)} ${data.bound_currency}`}
-                      source="Bound machine amount and currency from the reloaded authoritative offer row, times the trusted quantity."
-                    />
-                    <AuthoritativeField
-                      heading="PAYEE"
-                      value={data.bound_merchant_id}
-                      source="Server-registered merchant ID from adapter registration — not the merchant's claimed identity, and not its display name."
-                    />
-                    <AuthoritativeField
-                      heading="AUTHORIZATION"
-                      value={data.approval_scheme}
-                      source="How this authorization became active, from the durable authorization row."
-                    />
-                    <AuthoritativeField
-                      heading="POLICY"
-                      value={data.policy_version}
-                      source="The policy version covered by the transaction digest."
-                    />
-                  </div>
-
-                  <AuthorizationSchemeCard
-                    scheme={data.approval_scheme}
-                    signingKeyId={data.signing_key_id}
-                  />
-
-                  <KeyValueGrid columns={3}>
-                    <KeyValue label="Bound quantity" hint="Trusted mission state, not merchant input.">
-                      <Authoritative>{data.bound_quantity}</Authoritative>
-                    </KeyValue>
-                    <KeyValue
-                      label="Bound product"
-                      hint="Integrity-protected as the exact selected value, and still merchant-originated descriptive identity."
-                    >
-                      <TaintedText value={data.bound_product_id} label="Product ID" />
-                    </KeyValue>
-                    <KeyValue label="Binding version">
-                      <Authoritative>{data.binding_version}</Authoritative>
-                    </KeyValue>
-                    <KeyValue label="Offer version">
-                      <Authoritative>{data.offer_version}</Authoritative>
-                    </KeyValue>
-                    <KeyValue label="Issued at">
-                      <Authoritative>{timestamp(data.issued_at)}</Authoritative>
-                    </KeyValue>
-                    <KeyValue label="Expires at" hint="Checked against the server clock at consumption.">
-                      <Authoritative>{timestamp(data.expires_at)}</Authoritative>
-                    </KeyValue>
-                    <KeyValue label="Consumed at">
-                      <Authoritative>{timestamp(data.consumed_at)}</Authoritative>
-                    </KeyValue>
-                    <KeyValue
-                      label="Transaction digest"
-                      className="sm:col-span-2 xl:col-span-2"
-                      hint="Covers merchant, product, quantity, amount, currency, policy version, offer version, expiry and the server-held nonce."
-                    >
-                      <Authoritative className="break-all text-[11px]">
-                        {data.transaction_digest}
-                      </Authoritative>
-                    </KeyValue>
-                  </KeyValueGrid>
-
-                  <p className="text-[11px] leading-relaxed text-[color:var(--color-ink-4)]">
-                    The authorization nonce and any approval signature are absent from this screen
-                    because the API never sends them. There is no field here that could hold key
-                    material.
-                  </p>
-                </div>
-              )}
-            </ResultBoundary>
-          </Panel>
-
-          {/* ------------------------------------------------- payment ---- */}
-          <Panel
-            title="Payment state"
-            subtitle="The durable PaymentIntent as PACTRA holds it. Read-only: the C2 provider path is not implemented here, and nothing on this page can request a payment."
-            actions={<DataTierBadge tier="live" />}
-          >
-            <ResultBoundary
-              result={payment.data}
-              isLoading={payment.isPending}
-              what="payment intent"
-              notFound={
-                <EmptyState
-                  title="No PaymentIntent"
-                  detail="No durable PaymentIntent exists for this mission. An intent is created only when an ACTIVE authorization is atomically consumed."
-                />
-              }
-            >
-              {(data) => <PaymentReadModel intent={data} />}
-            </ResultBoundary>
-          </Panel>
-
-          {/* -------------------------------------------- decision trace -- */}
-          <Panel
-            title="Decision Trace"
-            subtitle="ADMIT → BIND → EXECUTE, projected from the verified hash chain. What happened, why, and what can happen next."
-            actions={<DataTierBadge tier="live" />}
-          >
-            <ResultBoundary result={replay.data} isLoading={replay.isPending} what="decision trace">
-              {(data) =>
-                data.trusted ? (
-                  <DecisionTrace entries={data.decision_trace} />
-                ) : (
-                  <PartialDataState
-                    title="No trusted trace for this mission"
-                    detail={
-                      <>
-                        Replay returned <code className="num">trusted: false</code> with reason code{" "}
-                        <code className="num">{data.reason_code}</code>
-                        {describeReasonCode(data.reason_code)
-                          ? ` — ${describeReasonCode(data.reason_code)}`
-                          : ""}
-                        . The Decision Trace is produced only after the hash chain verifies and
-                        every enforcement event can be interpreted, so it is empty here rather than
-                        partially reconstructed. A projection from history that did not verify
-                        would be a confident-looking lie.
-                        {data.detail ? (
-                          <span className="mt-1.5 block text-[color:var(--color-ink-3)]">
-                            {data.detail}
-                          </span>
-                        ) : null}
-                      </>
-                    }
-                  />
-                )
-              }
-            </ResultBoundary>
-          </Panel>
-
-          <p className="text-[11.5px] leading-relaxed text-[color:var(--color-ink-4)]">
-            Interactive checkout, provider handoff and the live payment path arrive with C2 and C5b.
-            Nothing on this page simulates them.{" "}
-            <Link
-              href="/missions"
-              className="inline-flex items-center gap-1 text-[color:var(--color-accent)] hover:underline"
-            >
-              The mission workbench
-              <ArrowUpRight aria-hidden className="size-3" />
-            </Link>{" "}
-            is where a mission is run today.
-          </p>
-        </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -284,15 +347,11 @@ function MissionSummary({ mission }: { mission: Mission }) {
       </div>
 
       <KeyValueGrid columns={3}>
-        <KeyValue
-          label="Raw query"
-          className="sm:col-span-2"
-          hint="User-supplied free text. Untrusted, and displayed as merchant-class display data."
-        >
+        <KeyValue label="Raw query" className="sm:col-span-2">
           <TaintedText value={mission.raw_query} label="Raw query" />
           <TaintFindings value={mission.raw_query} />
         </KeyValue>
-        <KeyValue label="Quantity" hint="Trusted mission state.">
+        <KeyValue label="Quantity">
           <Authoritative>{mission.quantity}</Authoritative>
         </KeyValue>
         <KeyValue label="Created at">
@@ -319,33 +378,15 @@ function MissionSummary({ mission }: { mission: Mission }) {
             <KeyValue label="Requested amount">
               <Authoritative>{inr(policy.requested_amount)}</Authoritative>
             </KeyValue>
-            <KeyValue label="Soft budget" hint="Above this, a human approval is required.">
+            <KeyValue label="Soft budget">
               <Authoritative>{inr(policy.soft_budget)}</Authoritative>
             </KeyValue>
-            <KeyValue label="Hard limit" hint="An absolute ceiling. No approval can raise it.">
+            <KeyValue label="Hard limit">
               <Authoritative>{inr(policy.hard_limit)}</Authoritative>
             </KeyValue>
           </KeyValueGrid>
-
-          {policy.reason_codes.length > 0 ? (
-            <ul className="mt-2.5 space-y-1">
-              {policy.reason_codes.map((code) => (
-                <li key={code} className="text-[11.5px] leading-snug">
-                  <code className="num font-semibold text-[color:var(--color-ink)]">{code}</code>
-                  {describeReasonCode(code) ? (
-                    <span className="text-[color:var(--color-ink-3)]"> — {describeReasonCode(code)}</span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </div>
-      ) : (
-        <RefusalState
-          title="No policy decision recorded"
-          detail="This mission has not reached a deterministic policy decision. Nothing downstream of policy can exist without one."
-        />
-      )}
+      ) : null}
     </div>
   );
 }
@@ -354,12 +395,7 @@ function OfferList({ mission }: { mission: Mission }) {
   const selectedId = mission.policy_decision?.selected_offer_id ?? null;
 
   if (mission.offers.length === 0) {
-    return (
-      <EmptyState
-        title="No offers"
-        detail="Discovery returned nothing for this mission, so there was nothing to rank or decide about."
-      />
-    );
+    return <EmptyState title="No offers" detail="Discovery returned nothing for this mission." />;
   }
 
   return (
@@ -379,19 +415,13 @@ function OfferRow({ offer, selected }: { offer: Offer; selected: boolean }) {
       className={cn(
         "rounded-md border p-3",
         selected
-          ? // The selected offer is one of the four places gradient is spent.
-            "border-[color:var(--color-accent)]/50 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-accent)_10%,transparent),color-mix(in_srgb,var(--color-accent-2)_8%,transparent))]"
+          ? "border-[color:var(--color-accent)]/50 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-accent)_10%,transparent),color-mix(in_srgb,var(--color-accent-2)_8%,transparent))]"
           : "border-[color:var(--color-line)] bg-[color:var(--color-surface)]",
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {selected ? <Badge tone="accent">SELECTED</Badge> : null}
-          {offer.valid ? null : (
-            <Badge tone="critical" variant="outline">
-              INVALID
-            </Badge>
-          )}
           <TaintedText value={offer.title} label="Product title" />
         </div>
         <Authoritative className="text-[14px] font-semibold whitespace-nowrap">
@@ -399,44 +429,17 @@ function OfferRow({ offer, selected }: { offer: Offer; selected: boolean }) {
         </Authoritative>
       </div>
 
-      <TaintFindings value={offer.title} />
-
       <KeyValueGrid columns={3} className="mt-2.5">
-        <KeyValue label="Merchant ID" hint="Server-registered. This is the authoritative payee semantic.">
+        <KeyValue label="Registered Payee (Authoritative)">
           <Authoritative>{offer.merchant_id}</Authoritative>
         </KeyValue>
-        <KeyValue
-          label="Merchant display name"
-          hint="Registry display data. It is not cryptographic merchant identity and must never replace the merchant ID."
-        >
+        <KeyValue label="Merchant display name">
           <TaintedText value={offer.merchant_name} label="Display name" />
         </KeyValue>
-        <KeyValue label="Offer version" hint="Server-computed content fingerprint at selection time.">
+        <KeyValue label="Offer version">
           <Authoritative className="truncate text-[11px]">{offer.offer_version}</Authoritative>
         </KeyValue>
-        <KeyValue label="Product ID">
-          <TaintedText value={offer.product_id} label="Product ID" />
-        </KeyValue>
-        <KeyValue label="Merchant trust" hint="From the server-owned registry. An adapter assigns none.">
-          <Authoritative>{offer.merchant_trust}</Authoritative>
-        </KeyValue>
-        <KeyValue label="Rank">
-          <Authoritative>{offer.rank ?? "—"}</Authoritative>
-        </KeyValue>
       </KeyValueGrid>
-
-      {offer.rejection_reasons.length > 0 ? (
-        <ul className="mt-2 space-y-1">
-          {offer.rejection_reasons.map((code) => (
-            <li key={code} className="text-[11.5px] leading-snug">
-              <code className="num font-semibold text-[color:var(--color-ink)]">{code}</code>
-              {describeReasonCode(code) ? (
-                <span className="text-[color:var(--color-ink-3)]"> — {describeReasonCode(code)}</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
     </li>
   );
 }
