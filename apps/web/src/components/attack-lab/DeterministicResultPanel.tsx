@@ -9,7 +9,7 @@ export function DeterministicResultPanel({ scenario }: { scenario: AttackScenari
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--pactra-line)] pb-3">
         <div className="flex items-center gap-2">
           <AlertOctagon className="size-4 text-[color:var(--pactra-critical)]" />
-          <span className="font-mono text-[13px] font-bold text-white uppercase tracking-wider">
+          <span className="font-mono text-[13px] font-bold text-[color:var(--pactra-ink)] uppercase tracking-wider">
             EXPECTED DETERMINISTIC RESULT
           </span>
         </div>
@@ -24,7 +24,7 @@ export function DeterministicResultPanel({ scenario }: { scenario: AttackScenari
           <div className="text-[color:var(--pactra-critical)] font-bold">{demoResult.verdict}</div>
           {demoResult.policyOutcome && (
             <div className="pt-1 text-[11px] text-[color:var(--pactra-ink-secondary)]">
-              policy_outcome: <span className="text-white font-bold">{demoResult.policyOutcome}</span>
+              policy_outcome: <span className="text-[color:var(--pactra-ink)] font-bold">{demoResult.policyOutcome}</span>
             </div>
           )}
           <div className="text-[11px] text-[color:var(--pactra-ink-secondary)]">
@@ -49,17 +49,17 @@ export function DeterministicResultPanel({ scenario }: { scenario: AttackScenari
       </p>
 
       {/* Advisory Risk Section */}
-      <div className="rounded border border-amber-500/30 bg-amber-500/10 p-3 space-y-1">
+      <div className="rounded border border-[color:var(--pactra-warning)]/30 bg-[color:var(--pactra-warning)]/10 p-3 space-y-1">
         <div className="flex items-center justify-between">
-          <span className="font-mono text-[10px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1">
-            <Info className="size-3 text-amber-300" />
+          <span className="font-mono text-[10px] font-bold text-[color:var(--pactra-warning)] uppercase tracking-wider flex items-center gap-1">
+            <Info className="size-3 text-[color:var(--pactra-warning)]" />
             ADVISORY RISK EVALUATION (ADVISORY ONLY)
           </span>
-          <span className="font-mono text-[10px] font-bold text-amber-300">
+          <span className="font-mono text-[10px] font-bold text-[color:var(--pactra-warning)]">
             {advisoryRisk.band} ({advisoryRisk.riskIndex})
           </span>
         </div>
-        <p className="text-[11px] text-amber-200/90 leading-snug">
+        <p className="text-[11px] text-[color:var(--pactra-ink-secondary)] leading-snug">
           {advisoryRisk.note}
         </p>
       </div>

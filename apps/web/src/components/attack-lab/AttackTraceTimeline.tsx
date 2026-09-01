@@ -7,8 +7,8 @@ export function AttackTraceTimeline({ entries }: { entries: DecisionTraceEntry[]
     <div className="rounded-lg border border-[color:var(--pactra-line-strong)] bg-[color:var(--pactra-surface)] p-4 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--pactra-line)] pb-3">
         <div>
-          <h3 className="font-display text-[15px] font-bold text-white flex items-center gap-2">
-            <FileText className="size-4 text-[#7C78E2]" />
+          <h3 className="font-display text-[15px] font-bold text-[color:var(--pactra-ink)] flex items-center gap-2">
+            <FileText className="size-4 text-[color:var(--pactra-indigo)]" />
             DECISION TRACE EVIDENCE
           </h3>
           <p className="text-[12px] text-[color:var(--pactra-ink-secondary)]">
@@ -31,7 +31,7 @@ export function AttackTraceTimeline({ entries }: { entries: DecisionTraceEntry[]
                 <span className="font-bold text-[color:var(--pactra-indigo)] bg-[color:var(--pactra-indigo)]/15 px-2 py-0.5 rounded">
                   STAGE: {entry.stage}
                 </span>
-                <span className="text-white font-bold">{entry.event_type}</span>
+                <span className="text-[color:var(--pactra-ink)] font-bold">{entry.event_type}</span>
               </div>
               <div className="text-[color:var(--pactra-ink-muted)]">
                 {entry.recorded_at} (SYNTHETIC DEMO TRACE)
@@ -56,7 +56,21 @@ export function AttackTraceTimeline({ entries }: { entries: DecisionTraceEntry[]
 
               <div>
                 policy_outcome:{" "}
-                <span className="text-white font-semibold">{entry.policy_outcome ?? "NONE"}</span>
+                {entry.policy_outcome ? (
+                  <span
+                    className={
+                      entry.policy_outcome === "ALLOW"
+                        ? "text-[color:var(--pactra-success)] font-bold"
+                        : entry.policy_outcome === "DENY"
+                        ? "text-[color:var(--pactra-critical)] font-bold"
+                        : "text-[color:var(--pactra-warning)] font-bold"
+                    }
+                  >
+                    {entry.policy_outcome}
+                  </span>
+                ) : (
+                  <span className="text-[color:var(--pactra-ink-muted)] font-normal">—</span>
+                )}
               </div>
 
               <div>

@@ -55,11 +55,11 @@ export function DemoAdvisorySignals() {
     <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--pactra-line)] pb-3">
         <div>
-          <h2 className="font-display text-[15px] font-bold text-white uppercase tracking-wider">
+          <h2 className="font-display text-[15px] font-bold text-[color:var(--pactra-ink)] uppercase tracking-wider">
             DEMO ADVISORY SIGNALS
           </h2>
           <p className="text-[12px] text-[color:var(--pactra-ink-muted)]">
-            Authoritative heuristics evaluated to construct the normalized risk index.
+            Authored advisory indicators illustrating non-authoritative operator context.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -85,12 +85,12 @@ export function DemoAdvisorySignals() {
                   <span className="font-mono text-[10.5px] font-bold text-[color:var(--pactra-warning)] bg-[color:var(--pactra-warning)]/15 px-2 py-0.5 rounded">
                     {signal.type}
                   </span>
-                  <Icon className="size-4 text-[#7C78E2]" />
+                  <Icon className="size-4 text-[color:var(--pactra-indigo)]" />
                 </div>
-                <h3 className="font-display text-[13px] font-bold text-white">
+                <h3 className="font-display text-[13px] font-bold text-[color:var(--pactra-ink)]">
                   {signal.name}
                 </h3>
-                <div className="rounded bg-[#11131b] p-2 font-mono text-[11px] text-[#9D9BE7] border border-white/5">
+                <div className="rounded bg-[color:var(--pactra-surface-3)] p-2 font-mono text-[11px] text-[color:var(--pactra-indigo)] border border-[color:var(--pactra-line)]">
                   {signal.observedValue}
                 </div>
                 <p className="text-[11px] leading-relaxed text-[color:var(--pactra-ink-secondary)]">
@@ -98,9 +98,9 @@ export function DemoAdvisorySignals() {
                 </p>
               </div>
 
-              <div className="border-t border-white/5 pt-2 flex items-center justify-between text-[11px] font-mono">
+              <div className="border-t border-[color:var(--pactra-line)] pt-2 flex items-center justify-between text-[11px] font-mono">
                 <span className="text-[color:var(--pactra-ink-muted)]">Weight:</span>
-                <span className="font-bold text-white">+{signal.rawWeight.toFixed(2)}</span>
+                <span className="font-bold text-[color:var(--pactra-ink)]">+{signal.rawWeight.toFixed(2)}</span>
               </div>
             </div>
           );

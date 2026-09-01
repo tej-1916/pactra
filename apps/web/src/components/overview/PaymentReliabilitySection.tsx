@@ -1,6 +1,6 @@
-import { ArrowRight, RefreshCw } from "lucide-react";
+import { ArrowRight, RefreshCw, Workflow } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
-import { DataTierBadge } from "@/components/ui/DataTier";
+import { Badge } from "@/components/ui/Badge";
 
 export function PaymentReliabilitySection() {
   const steps = [
@@ -15,7 +15,11 @@ export function PaymentReliabilitySection() {
     <Panel
       title="EXECUTION & RELIABILITY FLOW"
       subtitle="How PACTRA manages lost provider responses, network partitions, and idempotency guarantees."
-      actions={<DataTierBadge tier="generated" />}
+      actions={
+        <Badge tone="accent" variant="outline" icon={<Workflow className="size-3.5" />}>
+          STATE FLOW
+        </Badge>
+      }
     >
       <div className="space-y-4">
         {/* Step Flow */}
@@ -47,10 +51,10 @@ export function PaymentReliabilitySection() {
           ))}
         </div>
 
-        <div className="rounded border border-[#B7791F]/30 bg-[#B7791F]/10 p-3 text-[11.5px] leading-relaxed text-[color:var(--pactra-ink-secondary)] flex items-start gap-2.5">
-          <RefreshCw className="size-4 text-[#B7791F] shrink-0 mt-0.5" />
+        <div className="rounded border border-[color:var(--pactra-warning)]/30 bg-[color:var(--pactra-warning)]/10 p-3 text-[11.5px] leading-relaxed text-[color:var(--pactra-ink-secondary)] flex items-start gap-2.5">
+          <RefreshCw className="size-4 text-[color:var(--pactra-warning)] shrink-0 mt-0.5" />
           <div>
-            <span className="font-mono font-bold text-[#B7791F]">RAZORPAY TEST MODE PATH SUPPORTED:</span>{" "}
+            <span className="font-mono font-bold text-[color:var(--pactra-warning)]">RAZORPAY TEST MODE PATH SUPPORTED:</span>{" "}
             Provider-derived terminal outcomes such as SUCCEEDED, FAILED_RETRYABLE, and FAILED_TERMINAL are shown only when supported by runtime evidence.
           </div>
         </div>

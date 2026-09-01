@@ -148,7 +148,7 @@ const EXAMPLES: ProtocolExample[] = [
       2
     ),
     kernelHandoffNote:
-      "Handed to Security Kernel for BIND evaluation. Mints cryptographic authorization only if policy passes.",
+      "Handed to Security Kernel for BIND evaluation. Mints authorization only if policy passes.",
   },
 ];
 
@@ -160,7 +160,7 @@ export function AdapterFlowDemo() {
     <div className="rounded-lg border border-[color:var(--pactra-line-strong)] bg-[color:var(--pactra-surface)] p-5 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--pactra-line)] pb-3">
         <div>
-          <h2 className="font-display text-[15px] font-bold text-white uppercase tracking-wider">
+          <h2 className="font-display text-[15px] font-bold text-[color:var(--pactra-ink)] uppercase tracking-wider">
             INPUT → TRANSLATION → CANDIDATE PREVIEW
           </h2>
           <p className="text-[12px] text-[color:var(--pactra-ink-muted)]">
@@ -186,12 +186,12 @@ export function AdapterFlowDemo() {
             onClick={() => setSelectedId(ex.id)}
             className={`rounded-md px-3 py-1.5 font-mono text-[11.5px] font-bold transition-colors ${
               selectedId === ex.id
-                ? "bg-[#15183F] text-white border border-[#7C78E2]"
-                : "bg-[color:var(--pactra-surface-2)] text-[color:var(--pactra-ink-secondary)] hover:text-white border border-transparent"
+                ? "bg-[color:var(--pactra-surface-3)] text-[color:var(--pactra-ink)] border border-[color:var(--pactra-indigo)]"
+                : "bg-[color:var(--pactra-surface-2)] text-[color:var(--pactra-ink-secondary)] hover:text-[color:var(--pactra-ink)] border border-transparent"
             }`}
           >
             {ex.name}
-            <span className="ml-2 text-[10px] text-[#9D9BE7]">[{ex.status}]</span>
+            <span className="ml-2 text-[10px] text-[color:var(--pactra-indigo)]">[{ex.status}]</span>
           </button>
         ))}
       </div>
@@ -201,7 +201,7 @@ export function AdapterFlowDemo() {
         {/* Column 1: External Input */}
         <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] p-4 flex flex-col justify-between space-y-3">
           <div>
-            <div className="flex items-center justify-between pb-2 border-b border-white/5">
+            <div className="flex items-center justify-between pb-2 border-b border-[color:var(--pactra-line)]">
               <span className="text-[10px] font-bold text-[color:var(--pactra-critical)] uppercase tracking-wider">
                 1. EXTERNAL UNTRUSTED INPUT
               </span>
@@ -212,7 +212,7 @@ export function AdapterFlowDemo() {
             <div className="text-[11px] text-[color:var(--pactra-ink-muted)] pt-2 pb-1">
               Format: {active.inputFormat}
             </div>
-            <pre className="rounded bg-[#11131b] p-3 text-[11px] text-[color:var(--pactra-ink-secondary)] overflow-x-auto border border-white/5 max-h-[220px]">
+            <pre className="rounded bg-[color:var(--pactra-surface-3)] p-3 text-[11px] text-[color:var(--pactra-ink-secondary)] overflow-x-auto border border-[color:var(--pactra-line)] max-h-[220px]">
               {active.inputJson}
             </pre>
           </div>
@@ -222,10 +222,10 @@ export function AdapterFlowDemo() {
         </div>
 
         {/* Column 2: Translation Rules */}
-        <div className="rounded-lg border border-[#7C78E2]/30 bg-[#15183F]/60 p-4 flex flex-col justify-between space-y-3">
+        <div className="rounded-lg border border-[color:var(--pactra-indigo)]/30 bg-[color:var(--pactra-surface-2)] p-4 flex flex-col justify-between space-y-3">
           <div>
-            <div className="flex items-center justify-between pb-2 border-b border-white/5">
-              <span className="text-[10px] font-bold text-[#9D9BE7] uppercase tracking-wider">
+            <div className="flex items-center justify-between pb-2 border-b border-[color:var(--pactra-line)]">
+              <span className="text-[10px] font-bold text-[color:var(--pactra-indigo)] uppercase tracking-wider">
                 2. ADAPTER TRANSLATION
               </span>
               <Badge tone="accent" variant="outline">
@@ -238,7 +238,7 @@ export function AdapterFlowDemo() {
             <ul className="space-y-2 text-[11px] text-[color:var(--pactra-ink-secondary)]">
               {active.translationRules.map((rule, idx) => (
                 <li key={idx} className="flex items-start gap-2">
-                  <CheckCircle2 className="size-3.5 text-[#7C78E2] shrink-0 mt-0.5" />
+                  <CheckCircle2 className="size-3.5 text-[color:var(--pactra-indigo)] shrink-0 mt-0.5" />
                   <span>{rule}</span>
                 </li>
               ))}
@@ -252,7 +252,7 @@ export function AdapterFlowDemo() {
         {/* Column 3: Canonical Candidate */}
         <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] p-4 flex flex-col justify-between space-y-3">
           <div>
-            <div className="flex items-center justify-between pb-2 border-b border-white/5">
+            <div className="flex items-center justify-between pb-2 border-b border-[color:var(--pactra-line)]">
               <span className="text-[10px] font-bold text-[color:var(--pactra-success)] uppercase tracking-wider">
                 3. CANONICAL CANDIDATE
               </span>
@@ -263,7 +263,7 @@ export function AdapterFlowDemo() {
             <div className="text-[11px] text-[color:var(--pactra-ink-muted)] pt-2 pb-1">
               Kernel Ingestion Payload:
             </div>
-            <pre className="rounded bg-[#11131b] p-3 text-[11px] text-[#9D9BE7] overflow-x-auto border border-white/5 max-h-[220px]">
+            <pre className="rounded bg-[color:var(--pactra-surface-3)] p-3 text-[11px] text-[color:var(--pactra-indigo)] overflow-x-auto border border-[color:var(--pactra-line)] max-h-[220px]">
               {active.candidateJson}
             </pre>
           </div>

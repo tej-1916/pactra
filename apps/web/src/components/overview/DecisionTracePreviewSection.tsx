@@ -4,50 +4,49 @@ import { Panel } from "@/components/ui/Panel";
 import { Badge } from "@/components/ui/Badge";
 
 export function DecisionTracePreviewSection() {
-  const frozenFields = [
-    { field: "stage", val: '"EXECUTE"', type: "ADMIT | BIND | EXECUTE" },
-    { field: "event_type", val: '"PAYMENT_SETTLED"', type: "Machine Event Identifier" },
-    { field: "verdict", val: '"SUCCEEDED"', type: "ACCEPTED | REFUSED | SUCCEEDED..." },
-    { field: "reason_codes", val: '["POLICY_SATISFIED", "PAYMENT_CONFIRMED"]', type: "Array of C1 reason strings" },
-    { field: "invariant_id", val: '"INV_01_AUTH_REQUIRED"', type: "Contract Invariant ID" },
-    { field: "approval_scheme", val: '"POLICY_AUTO"', type: "POLICY_AUTO | USER_ED25519" },
-    { field: "policy_outcome", val: '"ALLOW"', type: "ALLOW | REQUIRE_APPROVAL | DENY" },
-    { field: "payment_state", val: '"SUCCEEDED"', type: "CREATED | PROVIDER_PENDING | SUCCEEDED..." },
-    { field: "advisory", val: '{ risk_index: 0.12, flags: [] }', type: "Advisory Risk Payload (No Authority)" },
-    { field: "next_action", val: '"NONE"', type: "Recommended next step" },
-    { field: "evidence", val: '{ provider_reference: "pay_test_98a" }', type: "Cryptographic & Provider Evidence" },
-    { field: "recorded_at", val: '"2026-09-01T14:30:00.000Z"', type: "ISO-8601 Timestamp" },
+  const contractFields = [
+    { field: "stage", type: '"ADMIT" | "BIND" | "EXECUTE"' },
+    { field: "event_type", type: "EventType" },
+    { field: "verdict", type: '"ACCEPTED" | "REFUSED" | "PENDING" | "SUCCEEDED" | "FAILED" | "IGNORED" | "ADVISORY"' },
+    { field: "reason_codes", type: "ReasonCode[]" },
+    { field: "invariant_id", type: "string | null" },
+    { field: "approval_scheme", type: '"POLICY_AUTO" | "USER_ED25519" | "LEGACY_SERVER" | null' },
+    { field: "policy_outcome", type: '"ALLOW" | "REQUIRE_APPROVAL" | "DENY" | null' },
+    { field: "payment_state", type: '"CREATED" | "QUEUED" | "PROCESSING" | "PROVIDER_PENDING" | "SUCCEEDED" | "FAILED_RETRYABLE" | "FAILED_TERMINAL" | "CANCELLED" | null' },
+    { field: "advisory", type: "boolean" },
+    { field: "next_action", type: "DecisionNextAction" },
+    { field: "evidence", type: "{ event_id: UUID, sequence: number, actor: string }" },
+    { field: "recorded_at", type: "string (ISO-8601 UTC)" },
   ];
 
   return (
     <Panel
       title="REPLAYABLE DECISION TRACE EVIDENCE"
-      subtitle="Every mission step produces a contract-frozen DecisionTraceEntry. No chain-of-thought, no invented state_hash or prev_hash fields."
+      subtitle="Every mission step produces a contract-frozen DecisionTraceEntry. No chain-of-thought, no secrets, no fabricated fields."
       actions={
         <Badge tone="accent" variant="outline" icon={<FileClock className="size-3.5" />}>
-          SCHEMA PREVIEW
+          SCHEMA CONTRACT
         </Badge>
       }
     >
       <div className="space-y-4">
         {/* Code / Schema Display Panel */}
-        <div className="rounded-lg border border-[color:var(--pactra-line-strong)] bg-[#07080D] p-4 overflow-x-auto">
-          <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/10">
-            <span className="font-mono text-[11px] font-bold text-[#9D9BE7] tracking-wider uppercase">
+        <div className="rounded-lg border border-[color:var(--pactra-line-strong)] bg-[color:var(--pactra-surface-2)] p-4 overflow-x-auto">
+          <div className="flex items-center justify-between pb-3 mb-3 border-b border-[color:var(--pactra-line)]">
+            <span className="font-mono text-[11px] font-bold text-[color:var(--pactra-indigo)] tracking-wider uppercase">
               FROZEN C1 DECISION TRACE SCHEMA (JSON)
             </span>
-            <span className="font-mono text-[10px] text-white/50">
+            <span className="font-mono text-[10px] text-[color:var(--pactra-ink-muted)]">
               Contract truth · Replayable Audit Record
             </span>
           </div>
 
-          <pre className="font-mono text-[12px] leading-relaxed text-white/90">
-            <code>{`DecisionTraceEntry {`}</code>
-            {frozenFields.map((f) => (
-              <div key={f.field} className="pl-4 flex flex-wrap items-baseline gap-2 py-0.5 hover:bg-white/[0.03]">
-                <span className="text-[#9D9BE7] font-semibold">{f.field}:</span>
-                <span className="text-[#BBB9F5]">{f.val},</span>
-                <span className="text-[10px] text-white/40 italic">{`// ${f.type}`}</span>
+          <pre className="font-mono text-[12px] leading-relaxed text-[color:var(--pactra-ink)]">
+            <code>{`interface DecisionTraceEntry {`}</code>
+            {contractFields.map((f) => (
+              <div key={f.field} className="pl-4 flex flex-wrap items-baseline gap-2 py-0.5 hover:bg-black/5 dark:hover:bg-white/5">
+                <span className="text-[color:var(--pactra-indigo)] font-semibold">{f.field}:</span>
+                <span className="text-[color:var(--pactra-ink-secondary)]">{f.type};</span>
               </div>
             ))}
             <code>{`}`}</code>

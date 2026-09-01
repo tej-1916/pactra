@@ -45,8 +45,8 @@ export function SourceSelector({
             onClick={() => onSelectMode("DEMO")}
             className={`rounded px-3 py-1.5 font-mono text-[12px] font-bold transition-colors ${
               mode === "DEMO"
-                ? "bg-[#15183F] text-white border border-[#7C78E2]"
-                : "bg-transparent text-[color:var(--pactra-ink-muted)] hover:text-white"
+                ? "bg-[color:var(--pactra-surface-3)] text-[color:var(--pactra-ink)] border border-[color:var(--pactra-indigo)]"
+                : "bg-transparent text-[color:var(--pactra-ink-muted)] hover:text-[color:var(--pactra-ink)]"
             }`}
           >
             <FileText className="size-3.5 inline mr-1.5 text-[color:var(--pactra-indigo)]" />
@@ -57,8 +57,8 @@ export function SourceSelector({
             onClick={() => onSelectMode("RUNTIME")}
             className={`rounded px-3 py-1.5 font-mono text-[12px] font-bold transition-colors ${
               mode === "RUNTIME"
-                ? "bg-[#15183F] text-white border border-[#7C78E2]"
-                : "bg-transparent text-[color:var(--pactra-ink-muted)] hover:text-white"
+                ? "bg-[color:var(--pactra-surface-3)] text-[color:var(--pactra-ink)] border border-[color:var(--pactra-indigo)]"
+                : "bg-transparent text-[color:var(--pactra-ink-muted)] hover:text-[color:var(--pactra-ink)]"
             }`}
           >
             <Database className="size-3.5 inline mr-1.5 text-[color:var(--pactra-indigo)]" />
@@ -104,11 +104,11 @@ export function SourceSelector({
               onClick={() => onSelectDemoScenario(sc.id)}
               className={`rounded-md border p-3 text-left transition-all ${
                 selectedDemoScenarioId === sc.id
-                  ? "border-[#7C78E2] bg-[#15183F]/80 shadow-sm"
+                  ? "border-[color:var(--pactra-indigo)] bg-[color:var(--pactra-surface-3)] shadow-sm"
                   : "border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] hover:border-[color:var(--pactra-line-strong)]"
               }`}
             >
-              <div className="font-mono text-[12px] font-bold text-white pb-1">
+              <div className="font-mono text-[12px] font-bold text-[color:var(--pactra-ink)] pb-1">
                 {sc.name}
               </div>
               <p className="text-[11px] text-[color:var(--pactra-ink-secondary)] leading-snug line-clamp-2">
@@ -121,16 +121,21 @@ export function SourceSelector({
         <div className="space-y-3 font-mono text-[11.5px]">
           {/* Manual Mission ID Entry */}
           <form onSubmit={handleManualSubmit} className="flex gap-2 items-center">
+            <label htmlFor="audit-mission-id-input" className="sr-only">
+              Mission ID for replay
+            </label>
             <input
+              id="audit-mission-id-input"
+              aria-label="Mission ID for replay"
               type="text"
               value={manualId}
               onChange={(e) => setManualId(e.target.value)}
               placeholder="Enter UUID or mission ID (e.g. 550e8400-e29b-41d4-a716-446655440000)"
-              className="flex-1 rounded border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] px-3 py-1.5 text-white text-[12px] placeholder:text-[color:var(--pactra-ink-muted)] focus:outline-none focus:border-[#7C78E2]"
+              className="flex-1 rounded border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] px-3 py-1.5 text-[color:var(--pactra-ink)] text-[12px] placeholder:text-[color:var(--pactra-ink-muted)] focus:outline-none focus:border-[color:var(--pactra-indigo)]"
             />
             <button
               type="submit"
-              className="rounded bg-[#15183F] border border-[#7C78E2] px-3 py-1.5 font-bold text-white hover:bg-[#202160] transition-colors flex items-center gap-1 shrink-0"
+              className="rounded bg-[color:var(--pactra-surface-3)] border border-[color:var(--pactra-indigo)] px-3 py-1.5 font-bold text-[color:var(--pactra-ink)] hover:bg-[color:var(--pactra-surface-2)] transition-colors flex items-center gap-1 shrink-0"
             >
               Load Replay <ArrowRight className="size-3" />
             </button>
@@ -138,27 +143,39 @@ export function SourceSelector({
 
           {/* Browser Registered Missions List */}
           <div className="space-y-1.5 pt-1">
-            <div className="text-[10.5px] font-bold text-[color:var(--pactra-ink-muted)] uppercase">
-              BROWSER-LOCAL MISSIONS (THIS BROWSER SESSION)
-            </div>
+            <span className="text-[10px] text-[color:var(--pactra-ink-muted)] uppercase tracking-wider">
+              Recorded in this browser ({missions.length})
+            </span>
             {missions.length === 0 ? (
-              <div className="p-3 rounded bg-[color:var(--pactra-surface-2)] text-[color:var(--pactra-ink-secondary)]">
-                No missions created in this browser session yet. You can paste a mission ID above or select an Authored Demo Trace.
+              <div className="text-[11px] text-[color:var(--pactra-ink-muted)] italic py-2">
+                No missions created in this browser session yet. Run a mission in Live Commerce or paste a mission UUID above.
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div className="grid gap-1.5 sm:grid-cols-2">
                 {missions.map((m) => (
                   <button
                     key={m.id}
                     type="button"
                     onClick={() => onSelectMission(m.id)}
-                    className={`rounded border px-3 py-1.5 transition-colors ${
+                    className={`rounded border p-2.5 text-left transition-colors flex items-center justify-between ${
                       selectedMissionId === m.id
-                        ? "border-[#7C78E2] bg-[#15183F] text-white font-bold"
-                        : "border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] text-[color:var(--pactra-ink-muted)] hover:text-white"
+                        ? "border-[color:var(--pactra-indigo)] bg-[color:var(--pactra-surface-3)]"
+                        : "border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] hover:border-[color:var(--pactra-line-strong)]"
                     }`}
                   >
-                    {m.id} {m.raw_query ? `· "${m.raw_query}"` : ""}
+                    <div className="min-w-0 pr-2">
+                      <div className="truncate font-bold text-[color:var(--pactra-ink)]">{m.id}</div>
+                      {m.raw_query && (
+                        <div className="truncate text-[10px] text-[color:var(--pactra-ink-muted)]">
+                          &quot;{m.raw_query}&quot;
+                        </div>
+                      )}
+                    </div>
+                    {selectedMissionId === m.id && (
+                      <span className="text-[9px] font-bold text-[color:var(--pactra-indigo)] shrink-0">
+                        ACTIVE
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

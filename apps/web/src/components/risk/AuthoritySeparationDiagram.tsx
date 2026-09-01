@@ -45,7 +45,7 @@ export function AuthoritySeparationDiagram() {
     <div className="rounded-lg border border-[color:var(--pactra-line-strong)] bg-[color:var(--pactra-surface)] p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--pactra-line)] pb-3">
         <div>
-          <h2 className="font-display text-[15px] font-bold text-white uppercase tracking-wider">
+          <h2 className="font-display text-[15px] font-bold text-[color:var(--pactra-ink)] uppercase tracking-wider">
             AUTHORITY SEPARATION ARCHITECTURE
           </h2>
           <p className="text-[12px] text-[color:var(--pactra-ink-muted)]">
@@ -72,12 +72,12 @@ export function AuthoritySeparationDiagram() {
             >
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-[11px] font-bold text-[#9D9BE7]">
+                  <span className="font-mono text-[11px] font-bold text-[color:var(--pactra-indigo)]">
                     {item.step}
                   </span>
                   <Icon className="size-4 text-[color:var(--pactra-indigo)]" />
                 </div>
-                <div className="font-display text-[13px] font-bold text-white">
+                <div className="font-display text-[13px] font-bold text-[color:var(--pactra-ink)]">
                   {item.role}
                 </div>
                 <p className="text-[11.5px] leading-relaxed text-[color:var(--pactra-ink-secondary)]">
@@ -85,7 +85,7 @@ export function AuthoritySeparationDiagram() {
                 </p>
               </div>
 
-              <div className="border-t border-white/5 pt-2 flex items-center justify-between text-[10px] font-mono font-bold">
+              <div className="border-t border-[color:var(--pactra-line)] pt-2 flex items-center justify-between text-[10px] font-mono font-bold">
                 <span className={item.tone === "secure" ? "text-[color:var(--pactra-success)]" : "text-[color:var(--pactra-warning)]"}>
                   {item.authorityNote}
                 </span>
@@ -98,10 +98,10 @@ export function AuthoritySeparationDiagram() {
         })}
       </div>
 
-      <div className="rounded border border-[color:var(--pactra-indigo)]/30 bg-[#15183F]/70 p-3.5 flex items-start gap-3 text-[12px] leading-relaxed text-[color:var(--pactra-ink-secondary)]">
+      <div className="rounded border border-[color:var(--pactra-indigo)]/30 bg-[color:var(--pactra-surface-2)] p-3.5 flex items-start gap-3 text-[12px] leading-relaxed text-[color:var(--pactra-ink-secondary)]">
         <ShieldCheck className="size-4 text-[color:var(--pactra-indigo)] shrink-0 mt-0.5" />
         <div>
-          <strong className="text-white">Structural Guarantee:</strong> Even if a heuristic risk index reaches{" "}
+          <strong className="text-[color:var(--pactra-ink)]">Structural Guarantee:</strong> Even if a heuristic risk index reaches{" "}
           <span className="font-mono text-[color:var(--pactra-critical)] font-bold">CRITICAL (1.000)</span>, it cannot
           abort or deny a transaction on its own. It emits recommendation{" "}
           <span className="font-mono text-[color:var(--pactra-warning)]">REQUIRE_STRONGER_APPROVAL</span> or{" "}

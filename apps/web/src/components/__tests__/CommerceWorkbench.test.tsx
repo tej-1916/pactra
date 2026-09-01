@@ -62,13 +62,17 @@ describe("Live Commerce Workbench Stage-Enum Audit (Phase 4.2)", () => {
     expect(authCreatedEvent?.stage).toBe("BIND");
   });
 
-  it("6 & 7. USER_ED25519 waiting uses verdict PENDING, policy_outcome REQUIRE_APPROVAL, next_action AWAIT_USER_SIGNATURE at stage BIND; EXECUTE stage trace is absent until approved", () => {
+  it("6 & 7. USER_ED25519 waiting uses verdict PENDING, policy_outcome REQUIRE_APPROVAL on POLICY_DECISION and null on APPROVAL_REQUESTED, next_action AWAIT_USER_SIGNATURE at stage BIND; EXECUTE stage trace is absent until approved", () => {
     const sc = DEMO_SCENARIOS.USER_APPROVAL;
+    const policyEvent = sc.decisionTrace.find((e) => e.event_type === "POLICY_DECISION");
+    expect(policyEvent).toBeDefined();
+    expect(policyEvent?.policy_outcome).toBe("REQUIRE_APPROVAL");
+
     const pendingEvent = sc.decisionTrace.find((e) => e.event_type === "APPROVAL_REQUESTED");
     expect(pendingEvent).toBeDefined();
     expect(pendingEvent?.stage).toBe("BIND");
     expect(pendingEvent?.verdict).toBe("PENDING");
-    expect(pendingEvent?.policy_outcome).toBe("REQUIRE_APPROVAL");
+    expect(pendingEvent?.policy_outcome).toBeNull();
     expect(pendingEvent?.next_action).toBe("AWAIT_USER_SIGNATURE");
 
     const executeEvents = sc.decisionTrace.filter((e) => e.stage === "EXECUTE");
