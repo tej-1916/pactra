@@ -49,6 +49,9 @@
   --color-periwinkle: var(--pactra-periwinkle);
   --color-periwinkle-light: var(--pactra-periwinkle-light);
 
+  --color-btn-primary-bg: var(--pactra-btn-primary-bg);
+  --color-btn-primary-text: var(--pactra-btn-primary-text);
+
   --color-accent: var(--pactra-indigo);
   --color-accent-2: var(--pactra-indigo-bright);
   --color-accent-dim: var(--pactra-surface-2);
@@ -57,7 +60,7 @@
   --color-advisory: var(--pactra-warning);
   --color-critical: var(--pactra-critical);
   --color-taint: var(--pactra-periwinkle);
-  --color-neutral: #5E58D2;
+  --color-neutral: var(--pactra-indigo);
 
   /* Space Grotesk for display, Inter for text, IBM Plex Mono for machine
      values. Every one has a real fallback stack: a font that fails to load
@@ -95,8 +98,11 @@
   --pactra-periwinkle: #4338CA;
   --pactra-periwinkle-light: #5B52D6;
 
-  --pactra-success: #04785A;
-  --pactra-warning: #975A16;
+  --pactra-btn-primary-bg: #4338CA;
+  --pactra-btn-primary-text: #FFFFFF;
+
+  --pactra-success: #03694F;
+  --pactra-warning: #8A4E0D;
   --pactra-critical: #B91C1C;
 
   --pactra-field: radial-gradient(1000px 600px at 10% -10%, rgba(75, 66, 185, 0.07), transparent 65%),
@@ -131,11 +137,14 @@
 
   --pactra-indigo-deep: #1E2160;
   --pactra-indigo-dark: #28247A;
-  --pactra-indigo: #9691EC;
-  --pactra-indigo-bright: #BBB9F5;
+  --pactra-indigo: #C7C5F8;
+  --pactra-indigo-bright: #E2E1FC;
 
-  --pactra-periwinkle: #BBB9F5;
-  --pactra-periwinkle-light: #C1C0F3;
+  --pactra-periwinkle: #C7C5F8;
+  --pactra-periwinkle-light: #E2E1FC;
+
+  --pactra-btn-primary-bg: #4F46E5;
+  --pactra-btn-primary-text: #FFFFFF;
 
   --pactra-success: #10B981;
   --pactra-warning: #FBBF24;

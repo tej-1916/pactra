@@ -44,7 +44,7 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
 
     const variantStyles: Record<ButtonVariant, string> = {
       primary:
-        "bg-[color:var(--pactra-indigo)] text-white shadow-md border border-[color:var(--pactra-indigo-bright)]/40 hover:bg-[color:var(--pactra-indigo-dark)] hover:border-[color:var(--pactra-indigo-bright)] hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 active:scale-[0.985]",
+        "bg-[color:var(--pactra-btn-primary-bg)] text-[color:var(--pactra-btn-primary-text)] shadow-md border border-[color:var(--pactra-indigo-bright)]/40 hover:opacity-95 hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 active:scale-[0.985]",
       secondary:
         "bg-[color:var(--pactra-surface-2)] text-[color:var(--pactra-ink)] border border-[color:var(--pactra-line-strong)] hover:bg-[color:var(--pactra-surface-3)] hover:border-[color:var(--pactra-indigo)] hover:text-[color:var(--pactra-indigo)] hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.985]",
       dark:
@@ -73,7 +73,7 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
           <ArrowRight
             className={cn(
               "size-4 shrink-0 transition-transform duration-200 ease-out group-hover:translate-x-1.5",
-              variant === "primary" ? "text-white/90" : variant === "dark" ? "text-[color:var(--pactra-indigo-bright)]" : "text-[color:var(--pactra-indigo)]"
+              variant === "primary" ? "text-[color:var(--pactra-btn-primary-text)]/90" : variant === "dark" ? "text-[color:var(--pactra-indigo-bright)]" : "text-[color:var(--pactra-indigo)]"
             )}
           />
         )}

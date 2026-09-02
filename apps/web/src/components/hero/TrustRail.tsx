@@ -73,15 +73,15 @@ export function TrustRail({ activeStage = "admit", className }: TrustRailProps) 
               className={cn(
                 "flex items-center justify-between gap-1.5 rounded-md px-2 py-1.5 border transition-all duration-200 min-w-0",
                 stateInfo.status === "completed"
-                  ? "bg-[#04785A]/10 border-[#04785A]/40 text-[#04785A]"
+                  ? "bg-[color:var(--pactra-success)]/10 border-[color:var(--pactra-success)]/40 text-[color:var(--pactra-success)]"
                   : stateInfo.status === "active"
-                  ? "bg-[#1E2160] border-[#7C78E2] text-white shadow-xs"
+                  ? "bg-[color:var(--pactra-surface-3)] border-[color:var(--pactra-indigo)] text-[color:var(--pactra-ink)] shadow-xs"
                   : "bg-[color:var(--pactra-surface-2)] border-[color:var(--pactra-line)] text-[color:var(--pactra-ink-muted)]"
               )}
             >
               <div className="flex items-center gap-1.5 min-w-0">
                 {stateInfo.status === "completed" ? (
-                  <CheckCircle2 className="size-3.5 shrink-0 text-[#04785A]" />
+                  <CheckCircle2 className="size-3.5 shrink-0 text-[color:var(--pactra-success)]" />
                 ) : (
                   <Icon className="size-3.5 shrink-0" />
                 )}
@@ -94,9 +94,9 @@ export function TrustRail({ activeStage = "admit", className }: TrustRailProps) 
                 className={cn(
                   "font-mono text-[8px] sm:text-[8.5px] font-semibold px-1 py-0.5 rounded uppercase shrink-0",
                   stateInfo.status === "completed"
-                    ? "bg-[#04785A] text-white"
+                    ? "bg-[color:var(--pactra-success)] text-white"
                     : stateInfo.status === "active"
-                    ? "bg-[#4B42B9] text-white"
+                    ? "bg-[color:var(--pactra-indigo)] text-white"
                     : "bg-[color:var(--pactra-line)] text-[color:var(--pactra-ink-secondary)]"
                 )}
               >

@@ -68,7 +68,7 @@ export function AttackLabPreviewSection() {
                   <span
                     className={
                       item.verdict === "PENDING"
-                        ? "font-mono text-[9px] font-bold text-[#B7791F] bg-[#B7791F]/15 px-1.5 py-0.5 rounded border border-[#B7791F]/30"
+                        ? "font-mono text-[9px] font-bold text-[color:var(--pactra-warning)] bg-[color:var(--pactra-warning)]/15 px-1.5 py-0.5 rounded border border-[color:var(--pactra-warning)]/30"
                         : "font-mono text-[9px] font-bold text-[color:var(--pactra-critical)] bg-[color:var(--pactra-critical)]/15 px-1.5 py-0.5 rounded border border-[color:var(--pactra-critical)]/30"
                     }
                   >
@@ -81,7 +81,7 @@ export function AttackLabPreviewSection() {
                 </h3>
 
                 <div className="rounded bg-[color:var(--pactra-surface-3)] p-2 font-mono text-[10.5px] text-[color:var(--pactra-ink-secondary)]">
-                  <span className={item.category === "RELIABILITY FAILURE" ? "text-[#B7791F] font-semibold" : "text-[color:var(--pactra-critical)] font-semibold"}>
+                  <span className={item.category === "RELIABILITY FAILURE" ? "text-[color:var(--pactra-warning)] font-semibold" : "text-[color:var(--pactra-critical)] font-semibold"}>
                     {item.category === "RELIABILITY FAILURE" ? "FAILURE:" : "ATTACK:"}
                   </span>{" "}
                   {item.attack}

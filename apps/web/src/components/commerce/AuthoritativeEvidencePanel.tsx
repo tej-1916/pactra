@@ -77,10 +77,10 @@ export function AuthoritativeEvidencePanel({ scenario }: { scenario: DemoScenari
 
       {/* Lost Provider Response Handling */}
       {scenario.id === "PROVIDER_LOST" && (
-        <div className="rounded border border-[#B7791F]/30 bg-[#B7791F]/10 p-3 text-[11px] leading-relaxed text-[color:var(--pactra-ink-secondary)] flex items-start gap-2.5">
-          <RefreshCw className="size-4 text-[#B7791F] shrink-0 mt-0.5" />
+        <div className="rounded border border-[color:var(--pactra-warning)]/30 bg-[color:var(--pactra-warning)]/10 p-3 text-[11px] leading-relaxed text-[color:var(--pactra-ink-secondary)] flex items-start gap-2.5">
+          <RefreshCw className="size-4 text-[color:var(--pactra-warning)] shrink-0 mt-0.5" />
           <div>
-            <span className="font-mono font-bold text-[#B7791F] uppercase">LOST PROVIDER RESPONSE HANDLER:</span>{" "}
+            <span className="font-mono font-bold text-[color:var(--pactra-warning)] uppercase">LOST PROVIDER RESPONSE HANDLER:</span>{" "}
             PACTRA records uncertainty (`PROVIDER_PENDING`) and dispatches `RECONCILE_PAYMENT` against provider evidence before treating the payment result as terminal.
           </div>
         </div>

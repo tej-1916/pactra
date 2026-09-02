@@ -218,4 +218,16 @@ describe("Phase 9 Demo Hardening & Flow Verification", () => {
     expect(sysContainer.textContent).not.toContain("SETTLED AT PROVIDER");
     expect(sysContainer.textContent).not.toContain("PAYMENT CAPTURED LIVE");
   });
+
+  it("16. Primary button uses dedicated high-contrast theme variables", () => {
+    const { container } = render(<Hero />);
+    const primaryBtn = container.querySelector("a[href='/missions']");
+    expect(primaryBtn?.className).toContain("bg-[color:var(--pactra-btn-primary-bg)]");
+    expect(primaryBtn?.className).toContain("text-[color:var(--pactra-btn-primary-text)]");
+  });
+
+  it("17. TrustRail uses semantic theme variables for success and active stages", () => {
+    const { container } = render(<TrustRail activeStage="completed" />);
+    expect(container.innerHTML).toContain("var(--pactra-success)");
+  });
 });

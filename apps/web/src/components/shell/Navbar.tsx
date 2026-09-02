@@ -278,7 +278,7 @@ export function Navbar() {
                     <span>{item.label}</span>
                   </div>
                   {item.href === "/risk" && (
-                    <span className="font-mono text-[9px] font-bold text-[#B7791F] bg-[#B7791F]/15 px-1.5 py-0.5 rounded border border-[#B7791F]/30 uppercase">
+                    <span className="font-mono text-[9px] font-bold text-[color:var(--pactra-warning)] bg-[color:var(--pactra-warning)]/15 px-1.5 py-0.5 rounded border border-[color:var(--pactra-warning)]/30 uppercase">
                       ADVISORY
                     </span>
                   )}

@@ -75,7 +75,7 @@ const COMPONENTS: SystemComponentDef[] = [
     configurationStatus: () => "FRONTEND CONFIGURED",
     runtimeEvidence: () => "NOT RUNTIME VERIFIED",
     runtimeTone: () => "neutral",
-    details: "Guaranteed single-dispatch state machine (CREATED → QUEUED → PROCESSING → PROVIDER_PENDING → SUCCEEDED/FAILED).",
+    details: "Single-dispatch state machine implemented (CREATED → QUEUED → PROCESSING → PROVIDER_PENDING → SUCCEEDED/FAILED).",
     limitations: "Prevents double-charges via database UNIQUE(idempotency_key) constraint and outbox polling.",
   },
   {

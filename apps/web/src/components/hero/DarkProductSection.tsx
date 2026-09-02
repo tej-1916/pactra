@@ -177,13 +177,13 @@ DecisionTraceEntry {
           <div className="grid grid-cols-2 gap-3 pt-4 border-t border-white/10">
             {current.metrics.map((metric) => (
               <div key={metric.label} className="p-2.5 rounded-lg bg-[#12162F]/60 border border-white/10">
-                <span className="text-[10px] font-mono text-[#9D9BE7] block">
+                <span className="text-[10px] font-mono text-[#C7C5F8] block">
                   {metric.label}
                 </span>
                 <span className="font-mono text-sm font-bold text-white block mt-0.5">
                   {metric.value}
                 </span>
-                <span className="inline-flex items-center gap-1 font-mono text-[9px] text-[#04785A] font-semibold mt-1">
+                <span className="inline-flex items-center gap-1 font-mono text-[9px] text-[#10B981] font-semibold mt-1">
                   <CheckCircle2 className="size-2.5" />
                   {metric.status}
                 </span>
@@ -196,23 +196,23 @@ DecisionTraceEntry {
         <div className="lg:col-span-7 rounded-xl border border-[#7C78E2]/40 bg-[#12162F] p-4 sm:p-6 font-mono text-xs text-[#F7F7FF] flex flex-col justify-between shadow-inner">
           <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
             <div className="flex items-center gap-2">
-              <div className="size-2.5 rounded-full bg-[#C02231]" />
-              <div className="size-2.5 rounded-full bg-[#B7791F]" />
-              <div className="size-2.5 rounded-full bg-[#04785A]" />
-              <span className="text-[11px] text-[#9D9BE7] ml-2">pactra_kernel.rs</span>
+              <div className="size-2.5 rounded-full bg-[#EF4444]" />
+              <div className="size-2.5 rounded-full bg-[#FBBF24]" />
+              <div className="size-2.5 rounded-full bg-[#10B981]" />
+              <span className="text-[11px] text-[#C7C5F8] ml-2">pactra_kernel.rs</span>
             </div>
-            <span className="text-[10px] text-[#04785A] bg-[#04785A]/15 px-2 py-0.5 rounded border border-[#04785A]/30">
+            <span className="text-[10px] text-[#10B981] bg-[#10B981]/15 px-2 py-0.5 rounded border border-[#10B981]/30">
               STATE: VERIFIED_LEGAL
             </span>
           </div>
 
-          <pre className="overflow-x-auto text-[11.5px] leading-relaxed text-[#C1C0F3] p-3 rounded bg-[#1E2160]/40 border border-white/5 whitespace-pre-wrap">
+          <pre className="overflow-x-auto text-[11.5px] leading-relaxed text-[#E2E1FC] p-3 rounded bg-[#1E2160]/40 border border-white/5 whitespace-pre-wrap">
             <code>{current.code}</code>
           </pre>
 
-          <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#9D9BE7]">
+          <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#C7C5F8]">
             <span className="flex items-center gap-1.5">
-              <ShieldCheck className="size-3.5 text-[#04785A]" />
+              <ShieldCheck className="size-3.5 text-[#10B981]" />
               AUTHORITATIVE CONTRACT ENFORCED
             </span>
             <span className="font-mono text-[10px] text-white">0 FAILS · 100% REPLAYABLE</span>

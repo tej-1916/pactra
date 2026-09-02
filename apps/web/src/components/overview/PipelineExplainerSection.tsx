@@ -12,12 +12,12 @@ export function PipelineExplainerSection() {
         <div className="rounded-lg border border-[color:var(--pactra-line-strong)] bg-[color:var(--pactra-surface)] p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <FileCode className="size-4 text-[#7C78E2]" />
+              <FileCode className="size-4 text-[color:var(--pactra-indigo)]" />
               <span className="font-mono text-[14px] font-bold text-[color:var(--pactra-ink)]">
                 1. ADMIT
               </span>
             </div>
-            <span className="font-mono text-[10px] font-semibold text-[#9D9BE7] bg-[#7C78E2]/15 px-2 py-0.5 rounded uppercase">
+            <span className="font-mono text-[10px] font-semibold text-[color:var(--pactra-indigo)] bg-[color:var(--pactra-indigo)]/10 border border-[color:var(--pactra-indigo)]/25 px-2 py-0.5 rounded uppercase">
               GATE 1 · POLICY
             </span>
           </div>
@@ -28,22 +28,22 @@ export function PipelineExplainerSection() {
 
           <div className="space-y-1.5 pt-2 border-t border-[color:var(--pactra-line)]">
             <div className="flex items-center gap-2 text-[11.5px] font-mono text-[color:var(--pactra-ink-secondary)]">
-              <CheckCircle2 className="size-3.5 text-[#7C78E2] shrink-0" />
+              <CheckCircle2 className="size-3.5 text-[color:var(--pactra-indigo)] shrink-0" />
               <span>Typed Intent & Schema</span>
             </div>
             <div className="flex items-center gap-2 text-[11.5px] font-mono text-[color:var(--pactra-ink-secondary)]">
-              <CheckCircle2 className="size-3.5 text-[#7C78E2] shrink-0" />
+              <CheckCircle2 className="size-3.5 text-[color:var(--pactra-indigo)] shrink-0" />
               <span>Provenance & Taint Isolation</span>
             </div>
             <div className="flex items-center gap-2 text-[11.5px] font-mono text-[color:var(--pactra-ink-secondary)]">
-              <CheckCircle2 className="size-3.5 text-[#7C78E2] shrink-0" />
+              <CheckCircle2 className="size-3.5 text-[color:var(--pactra-indigo)] shrink-0" />
               <span>Merchant Capability Check</span>
             </div>
           </div>
 
           <div className="pt-2 space-y-1 text-[10px] font-mono text-[color:var(--pactra-ink-muted)]">
-            <div>Verdicts: <span className="text-[color:var(--pactra-success)]">ACCEPTED</span> · <span className="text-[color:var(--pactra-critical)]">REFUSED</span></div>
-            <div>Policy Outcome: <span className="text-[color:var(--pactra-indigo)]">ALLOW</span> · <span className="text-[color:var(--pactra-warning)]">REQUIRE_APPROVAL</span> · <span className="text-[color:var(--pactra-critical)]">DENY</span></div>
+            <div>Verdicts: <span className="text-[color:var(--pactra-success)] font-semibold">ACCEPTED</span> · <span className="text-[color:var(--pactra-critical)] font-semibold">REFUSED</span></div>
+            <div>Policy Outcome: <span className="text-[color:var(--pactra-indigo)] font-semibold">ALLOW</span> · <span className="text-[color:var(--pactra-warning)] font-semibold">REQUIRE_APPROVAL</span> · <span className="text-[color:var(--pactra-critical)] font-semibold">DENY</span></div>
           </div>
         </div>
 
@@ -51,12 +51,12 @@ export function PipelineExplainerSection() {
         <div className="rounded-lg border border-[color:var(--pactra-line-strong)] bg-[color:var(--pactra-surface)] p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Lock className="size-4 text-[#7C78E2]" />
+              <Lock className="size-4 text-[color:var(--pactra-indigo)]" />
               <span className="font-mono text-[14px] font-bold text-[color:var(--pactra-ink)]">
                 2. BIND
               </span>
             </div>
-            <span className="font-mono text-[10px] font-semibold text-[#9D9BE7] bg-[#7C78E2]/15 px-2 py-0.5 rounded uppercase">
+            <span className="font-mono text-[10px] font-semibold text-[color:var(--pactra-indigo)] bg-[color:var(--pactra-indigo)]/10 border border-[color:var(--pactra-indigo)]/25 px-2 py-0.5 rounded uppercase">
               GATE 2 · AUTHORIZATION
             </span>
           </div>
@@ -67,15 +67,15 @@ export function PipelineExplainerSection() {
 
           <div className="space-y-1.5 pt-2 border-t border-[color:var(--pactra-line)]">
             <div className="flex items-center gap-2 text-[11.5px] font-mono text-[color:var(--pactra-ink-secondary)]">
-              <CheckCircle2 className="size-3.5 text-[#7C78E2] shrink-0" />
+              <CheckCircle2 className="size-3.5 text-[color:var(--pactra-indigo)] shrink-0" />
               <span>Canonical Digest Calculation</span>
             </div>
             <div className="flex items-center gap-2 text-[11.5px] font-mono text-[color:var(--pactra-ink-secondary)]">
-              <CheckCircle2 className="size-3.5 text-[#7C78E2] shrink-0" />
+              <CheckCircle2 className="size-3.5 text-[color:var(--pactra-indigo)] shrink-0" />
               <span>POLICY_AUTO vs USER_ED25519</span>
             </div>
             <div className="flex items-center gap-2 text-[11.5px] font-mono text-[color:var(--pactra-ink-secondary)]">
-              <CheckCircle2 className="size-3.5 text-[#7C78E2] shrink-0" />
+              <CheckCircle2 className="size-3.5 text-[color:var(--pactra-indigo)] shrink-0" />
               <span>Expiry & Replay Nonce Check</span>
             </div>
           </div>
@@ -94,7 +94,7 @@ export function PipelineExplainerSection() {
                 3. EXECUTE
               </span>
             </div>
-            <span className="font-mono text-[10px] font-semibold text-[color:var(--pactra-success)] bg-[color:var(--pactra-success)]/15 px-2 py-0.5 rounded uppercase">
+            <span className="font-mono text-[10px] font-semibold text-[color:var(--pactra-success)] bg-[color:var(--pactra-success)]/10 border border-[color:var(--pactra-success)]/25 px-2 py-0.5 rounded uppercase">
               GATE 3 · EXECUTION
             </span>
           </div>
@@ -114,12 +114,12 @@ export function PipelineExplainerSection() {
             </div>
             <div className="flex items-center gap-2 text-[11.5px] font-mono text-[color:var(--pactra-ink-secondary)]">
               <CheckCircle2 className="size-3.5 text-[color:var(--pactra-success)] shrink-0" />
-              <span>Recorded Decision Trace Event</span>
+              <span>Terminal State Settle & Audit</span>
             </div>
           </div>
 
           <div className="pt-2 text-[10px] font-mono text-[color:var(--pactra-success)] font-semibold">
-            Rule: Same idempotency key ➔ at most one logical payment.
+            Terminal states: SUCCEEDED · FAILED_TERMINAL
           </div>
         </div>
       </div>
