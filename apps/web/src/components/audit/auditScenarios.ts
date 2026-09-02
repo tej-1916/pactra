@@ -36,7 +36,7 @@ export const AUDIT_DEMO_SCENARIOS: Record<string, DemoTraceScenario> = {
         payment_state: null,
         advisory: false,
         next_action: "CONTINUE_BIND",
-        evidence: { event_id: "evt_audit_demo_01", sequence: 1, actor: "security_kernel" },
+        evidence: { event_id: "evt_audit_demo_01", sequence: 1, actor: "policy-engine" },
         recorded_at: "2026-09-01T16:00:00.000Z",
       },
       {
@@ -106,7 +106,7 @@ export const AUDIT_DEMO_SCENARIOS: Record<string, DemoTraceScenario> = {
         payment_state: null,
         advisory: false,
         next_action: "CONTINUE_BIND",
-        evidence: { event_id: "evt_audit_appr_01", sequence: 1, actor: "security_kernel" },
+        evidence: { event_id: "evt_audit_appr_01", sequence: 1, actor: "policy-engine" },
         recorded_at: "2026-09-01T16:05:00.000Z",
       },
       {
@@ -134,7 +134,7 @@ export const AUDIT_DEMO_SCENARIOS: Record<string, DemoTraceScenario> = {
         payment_state: null,
         advisory: false,
         next_action: "AWAIT_USER_SIGNATURE",
-        evidence: { event_id: "evt_audit_appr_03", sequence: 3, actor: "security_kernel" },
+        evidence: { event_id: "evt_audit_appr_03", sequence: 3, actor: "policy-engine" },
         recorded_at: "2026-09-01T16:05:02.000Z",
       },
     ],
@@ -162,7 +162,7 @@ export const AUDIT_DEMO_SCENARIOS: Record<string, DemoTraceScenario> = {
         payment_state: null,
         advisory: false,
         next_action: "CONTINUE_BIND",
-        evidence: { event_id: "evt_audit_lost_01", sequence: 1, actor: "security_kernel" },
+        evidence: { event_id: "evt_audit_lost_01", sequence: 1, actor: "policy-engine" },
         recorded_at: "2026-09-01T16:10:00.000Z",
       },
       {
@@ -232,7 +232,7 @@ export const AUDIT_DEMO_SCENARIOS: Record<string, DemoTraceScenario> = {
         payment_state: null,
         advisory: false,
         next_action: "CONTINUE_BIND",
-        evidence: { event_id: "evt_audit_mut_01", sequence: 1, actor: "security_kernel" },
+        evidence: { event_id: "evt_audit_mut_01", sequence: 1, actor: "policy-engine" },
         recorded_at: "2026-09-01T16:15:00.000Z",
       },
       {

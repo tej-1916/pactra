@@ -75,9 +75,9 @@ export default async function RiskPage() {
         </Panel>
 
         {/* 5. Cross-Page Navigation */}
-        <div className="rounded-lg border border-[#7C78E2]/30 bg-[#15183F]/60 p-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] p-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="font-display text-[13.5px] font-bold text-white">
+            <h3 className="font-display text-[13.5px] font-bold text-[color:var(--pactra-ink)]">
               Explore Live Commerce Adjudication
             </h3>
             <p className="text-[11.5px] text-[color:var(--pactra-ink-secondary)]">
@@ -86,10 +86,10 @@ export default async function RiskPage() {
           </div>
           <Link
             href="/commerce"
-            className="inline-flex items-center gap-1.5 rounded-md border border-[#7C78E2] bg-[#7C78E2]/20 px-3.5 py-1.5 font-mono text-[12px] font-bold text-white transition-colors hover:bg-[#7C78E2]/35"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--pactra-indigo)] bg-[color:var(--pactra-indigo)]/15 px-3.5 py-1.5 font-mono text-[12px] font-bold text-[color:var(--pactra-indigo)] transition-colors hover:bg-[color:var(--pactra-indigo)]/25"
           >
             Open Live Commerce
-            <ArrowRight className="size-3.5 text-[#9D9BE7]" />
+            <ArrowRight className="size-3.5" />
           </Link>
         </div>
 
@@ -109,7 +109,7 @@ export default async function RiskPage() {
 function Point({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] p-3.5">
-      <h3 className="text-[12.5px] font-semibold tracking-tight text-white">{title}</h3>
+      <h3 className="text-[12.5px] font-semibold tracking-tight text-[color:var(--pactra-ink)]">{title}</h3>
       <p className="mt-1.5 text-[11.5px] leading-relaxed text-[color:var(--pactra-ink-secondary)]">{body}</p>
     </div>
   );

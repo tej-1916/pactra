@@ -68,7 +68,7 @@ export function AuthoritativeEvidencePanel({ scenario }: { scenario: DemoScenari
 
         <div className="rounded bg-[color:var(--pactra-surface-3)] p-2.5 space-y-1 font-mono text-[11px]">
           <div className="text-[color:var(--pactra-ink-muted)]">Provider Path:</div>
-          <div className="text-white font-semibold">Razorpay Test Mode path</div>
+          <div className="text-[color:var(--pactra-ink)] font-semibold">Razorpay Test Mode path</div>
           <div className="pt-1 text-[10.5px] text-[color:var(--pactra-ink-secondary)]">
             DEMO MODE: No runtime provider evidence. Scenario outcome is synthetic.
           </div>

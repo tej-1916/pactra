@@ -35,24 +35,23 @@ export function WhyPactraSection() {
         </div>
 
         {/* Column 2: Deterministic PACTRA Authority */}
-        <div className="rounded-lg border border-[#7C78E2]/40 bg-[#15183F]/50 p-4 flex flex-col justify-between relative overflow-hidden">
-          <div className="absolute -top-10 -right-10 size-24 bg-[#7C78E2]/10 rounded-full blur-xl pointer-events-none" />
+        <div className="rounded-lg border border-[color:var(--pactra-indigo)]/40 bg-[color:var(--pactra-surface-2)] p-4 flex flex-col justify-between relative overflow-hidden">
           <div className="space-y-2 relative z-10">
-            <div className="flex items-center gap-2 text-[#9D9BE7]">
+            <div className="flex items-center gap-2 text-[color:var(--pactra-indigo)]">
               <Shield className="size-4 shrink-0" />
               <span className="font-mono text-[11px] font-bold uppercase tracking-wider">
                 DETERMINISTIC AUTHORITY
               </span>
             </div>
-            <h3 className="font-display text-[15px] font-bold text-white">
+            <h3 className="font-display text-[15px] font-bold text-[color:var(--pactra-ink)]">
               PACTRA Control Plane
             </h3>
-            <p className="text-[12.5px] leading-relaxed text-[#BBB9F5]">
+            <p className="text-[12.5px] leading-relaxed text-[color:var(--pactra-ink-secondary)]">
               Enforces immutable admission policy, canonical transaction binding, user cryptographic approvals, and zero-trust invariant checks.
             </p>
           </div>
           <div className="mt-4 pt-3 border-t border-[color:var(--pactra-line)] relative z-10">
-            <span className="font-mono text-[10px] font-semibold text-[#9D9BE7] uppercase">
+            <span className="font-mono text-[10px] font-semibold text-[color:var(--pactra-indigo)] uppercase">
               Role: ENFORCEMENT & DECISION
             </span>
           </div>

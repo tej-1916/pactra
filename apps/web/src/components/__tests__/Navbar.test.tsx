@@ -166,4 +166,14 @@ describe("Navbar (Phase 2 App Shell)", () => {
     expect(text).not.toContain("API Status");
     expect(document.querySelector("#api-status")).toBeNull();
   });
+
+  it("16. Escape key closes More menu", () => {
+    render(<Navbar />);
+    const moreBtn = screen.getByRole("button", { name: /Secondary navigation options/i });
+    fireEvent.click(moreBtn);
+    expect(screen.getByRole("menuitem", { name: /Risk/i })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menuitem", { name: /Risk/i })).toBeNull();
+  });
 });

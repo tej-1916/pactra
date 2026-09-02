@@ -52,7 +52,7 @@ export function MerchantOfferPanel({
             {inr(quotedAmountInr)} {currency}
           </span>
         </div>
-        <TaintedText value={productTitle} label="Product title" className="text-[12.5px] font-semibold text-white" />
+        <TaintedText value={productTitle} label="Product title" className="text-[12.5px] font-semibold text-[color:var(--pactra-ink)]" />
         <TaintFindings value={productTitle} />
       </div>
 

@@ -1,7 +1,7 @@
-import { Check } from "lucide-react";
+import { Check, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { Panel } from "@/components/ui/Panel";
-import { DataTierBadge } from "@/components/ui/DataTier";
+import { Badge } from "@/components/ui/Badge";
 
 export function InvariantsSection() {
   const invariants = [
@@ -46,7 +46,11 @@ export function InvariantsSection() {
     <Panel
       title="CRITICAL SECURITY INVARIANTS"
       subtitle="Deterministic properties that hold unconditionally, even when the model, merchant, or agent is compromised."
-      actions={<DataTierBadge tier="generated" />}
+      actions={
+        <Badge tone="accent" variant="outline" icon={<ShieldCheck className="size-3.5" />}>
+          CORE INVARIANTS
+        </Badge>
+      }
     >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {invariants.map((item, idx) => (

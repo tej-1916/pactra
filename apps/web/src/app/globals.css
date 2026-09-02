@@ -131,15 +131,15 @@
 
   --pactra-indigo-deep: #1E2160;
   --pactra-indigo-dark: #28247A;
-  --pactra-indigo: #4B42B9;
-  --pactra-indigo-bright: #5E58D2;
+  --pactra-indigo: #7C78E2;
+  --pactra-indigo-bright: #9D9BE7;
 
-  --pactra-periwinkle: #7C78E2;
-  --pactra-periwinkle-light: #9D9BE7;
+  --pactra-periwinkle: #9D9BE7;
+  --pactra-periwinkle-light: #C1C0F3;
 
-  --pactra-success: #04785A;
-  --pactra-warning: #B7791F;
-  --pactra-critical: #C02231;
+  --pactra-success: #10B981;
+  --pactra-warning: #F59E0B;
+  --pactra-critical: #EF4444;
 
   --pactra-field: radial-gradient(1000px 600px at 12% -10%, rgba(94, 88, 210, 0.18), transparent 65%),
     radial-gradient(800px 500px at 88% -5%, rgba(124, 120, 226, 0.15), transparent 60%);

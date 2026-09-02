@@ -54,8 +54,8 @@ export default function SystemPage() {
         <div className="grid gap-4 md:grid-cols-3">
           <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] p-4 flex flex-col justify-between space-y-3">
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2 font-display text-[13.5px] font-bold text-white">
-                <History className="size-4 text-[#7C78E2]" />
+              <div className="flex items-center gap-2 font-display text-[13.5px] font-bold text-[color:var(--pactra-ink)]">
+                <History className="size-4 text-[color:var(--pactra-indigo)]" />
                 Audit & Replay
               </div>
               <p className="text-[11.5px] leading-relaxed text-[color:var(--pactra-ink-secondary)]">
@@ -64,16 +64,16 @@ export default function SystemPage() {
             </div>
             <Link
               href="/audit"
-              className="inline-flex items-center justify-between rounded-md border border-[#7C78E2] bg-[#7C78E2]/20 px-3 py-1.5 font-mono text-[11.5px] font-bold text-white transition-colors hover:bg-[#7C78E2]/35"
+              className="inline-flex items-center justify-between rounded-md border border-[color:var(--pactra-indigo)] bg-[color:var(--pactra-indigo)]/15 px-3 py-1.5 font-mono text-[11.5px] font-bold text-[color:var(--pactra-indigo)] transition-colors hover:bg-[color:var(--pactra-indigo)]/25"
             >
               Inspect Audit Evidence
-              <ArrowRight className="size-3.5 text-[#9D9BE7]" />
+              <ArrowRight className="size-3.5 text-[color:var(--pactra-indigo)]" />
             </Link>
           </div>
 
           <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] p-4 flex flex-col justify-between space-y-3">
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2 font-display text-[13.5px] font-bold text-white">
+              <div className="flex items-center gap-2 font-display text-[13.5px] font-bold text-[color:var(--pactra-ink)]">
                 <ShieldAlert className="size-4 text-[color:var(--pactra-critical)]" />
                 Attack Lab
               </div>
@@ -92,7 +92,7 @@ export default function SystemPage() {
 
           <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] p-4 flex flex-col justify-between space-y-3">
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2 font-display text-[13.5px] font-bold text-white">
+              <div className="flex items-center gap-2 font-display text-[13.5px] font-bold text-[color:var(--pactra-ink)]">
                 <ShoppingBag className="size-4 text-[color:var(--pactra-success)]" />
                 Live Commerce
               </div>
@@ -192,7 +192,7 @@ function Register({
   return (
     <div className="rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-surface-2)] p-4">
       <div className="border-b border-[color:var(--color-line)] pb-3">
-        <h3 className="text-[13.5px] font-semibold tracking-tight text-white">{heading}</h3>
+        <h3 className="text-[13.5px] font-semibold tracking-tight text-[color:var(--pactra-ink)]">{heading}</h3>
         <p className="mt-1 text-[11.5px] text-[color:var(--pactra-ink-secondary)]">{caption}</p>
       </div>
       <div className="mt-3 grid gap-3 xl:grid-cols-2">

@@ -22,6 +22,8 @@ export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuItemsRef = useRef<(HTMLAnchorElement | null)[]>([]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -33,6 +35,18 @@ export function Navbar() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Close dropdown on Escape and return focus
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (dropdownOpen && event.key === "Escape") {
+        setDropdownOpen(false);
+        buttonRef.current?.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [dropdownOpen]);
 
   const isSecondaryActive = SECONDARY_NAV.some((item) => isActiveRoute(pathname, item.href));
 
@@ -87,8 +101,22 @@ export function Navbar() {
             {/* Desktop Secondary Dropdown Menu ("More ▾") */}
             <div ref={dropdownRef} className="relative ml-1">
               <button
+                ref={buttonRef}
                 type="button"
                 onClick={() => setDropdownOpen((prev) => !prev)}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+                    if (!dropdownOpen) {
+                      e.preventDefault();
+                      setDropdownOpen(true);
+                      setTimeout(() => {
+                        menuItemsRef.current[0]?.focus();
+                      }, 0);
+                    }
+                  } else if (e.key === "Escape") {
+                    setDropdownOpen(false);
+                  }
+                }}
                 aria-expanded={dropdownOpen}
                 aria-haspopup="true"
                 aria-label="Secondary navigation options"
@@ -118,17 +146,35 @@ export function Navbar() {
                   <div className="px-2.5 py-1 font-mono text-[10px] font-bold text-[color:var(--pactra-ink-muted)] uppercase tracking-wider">
                     Supporting Surfaces
                   </div>
-                  {SECONDARY_NAV.map((item) => {
+                  {SECONDARY_NAV.map((item, idx) => {
                     const active = isActiveRoute(pathname, item.href);
                     const Icon = item.icon;
 
                     return (
                       <Link
                         key={item.href}
+                        ref={(el) => {
+                          menuItemsRef.current[idx] = el;
+                        }}
                         href={item.href}
                         role="menuitem"
                         title={item.blurb}
                         onClick={() => setDropdownOpen(false)}
+                        onKeyDown={(e) => {
+                          if (e.key === "ArrowDown") {
+                            e.preventDefault();
+                            const next = (idx + 1) % SECONDARY_NAV.length;
+                            menuItemsRef.current[next]?.focus();
+                          } else if (e.key === "ArrowUp") {
+                            e.preventDefault();
+                            const prev = (idx - 1 + SECONDARY_NAV.length) % SECONDARY_NAV.length;
+                            menuItemsRef.current[prev]?.focus();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setDropdownOpen(false);
+                            buttonRef.current?.focus();
+                          }
+                        }}
                         className={cn(
                           "flex items-center justify-between rounded-md px-2.5 py-2 font-mono text-[12.5px] font-medium transition-colors",
                           active
@@ -141,7 +187,7 @@ export function Navbar() {
                           <span>{item.label}</span>
                         </div>
                         {item.href === "/risk" && (
-                          <span className="font-mono text-[9px] font-bold text-[#B7791F] bg-[#B7791F]/15 px-1.5 py-0.5 rounded border border-[#B7791F]/30 uppercase">
+                          <span className="font-mono text-[9px] font-bold text-[color:var(--pactra-warning)] bg-[color:var(--pactra-warning)]/15 px-1.5 py-0.5 rounded border border-[color:var(--pactra-warning)]/30 uppercase">
                             ADVISORY
                           </span>
                         )}

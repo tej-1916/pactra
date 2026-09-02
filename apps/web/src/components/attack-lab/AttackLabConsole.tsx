@@ -39,7 +39,7 @@ export function AttackLabConsole() {
         {/* Scenario Selector */}
         <div className="space-y-2">
           <div className="flex items-center justify-between font-mono text-[11px] text-[color:var(--pactra-ink-muted)]">
-            <span className="font-bold text-white uppercase tracking-wider">
+            <span className="font-bold text-[color:var(--pactra-ink)] uppercase tracking-wider">
               AUTHORED SCENARIO SUITE
             </span>
             <span>4 PRIMARY REGRESSION SCENARIOS</span>

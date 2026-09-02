@@ -22,13 +22,13 @@ export function PostureBanner() {
             <p className="label-xs mb-2 text-[color:var(--color-accent)]">
               Adversarial Transaction Security for Agentic Commerce
             </p>
-            <h1 className="text-[26px] leading-[1.15] font-semibold tracking-tight text-[color:var(--color-ink)] sm:text-[30px]">
+            <h2 className="text-[26px] leading-[1.15] font-semibold tracking-tight text-[color:var(--color-ink)] sm:text-[30px]">
               AI proposes.
               <br />
               <span className="text-[color:var(--color-secure)]">
                 PACTRA decides what can move money.
               </span>
-            </h1>
+            </h2>
             <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-[color:var(--color-ink-2)]">
               Probabilistic reasoning. Deterministic transaction authority. The model, the agent and
               every merchant sit outside the security boundary — transaction invariants hold even

@@ -76,9 +76,9 @@ export function AttackLabPreviewSection() {
                   </span>
                 </div>
 
-                <h4 className="font-display text-[13.5px] font-bold text-[color:var(--pactra-ink)]">
+                <h3 className="font-display text-[13.5px] font-bold text-[color:var(--pactra-ink)]">
                   {item.title}
-                </h4>
+                </h3>
 
                 <div className="rounded bg-[color:var(--pactra-surface-3)] p-2 font-mono text-[10.5px] text-[color:var(--pactra-ink-secondary)]">
                   <span className={item.category === "RELIABILITY FAILURE" ? "text-[#B7791F] font-semibold" : "text-[color:var(--pactra-critical)] font-semibold"}>

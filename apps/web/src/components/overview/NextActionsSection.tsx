@@ -55,9 +55,9 @@ export function NextActionsSection() {
                     {act.tag}
                   </span>
                 </div>
-                <h4 className="font-display text-[14px] font-bold text-[color:var(--pactra-ink)] group-hover:text-[color:var(--pactra-indigo)]">
+                <h3 className="font-display text-[14px] font-bold text-[color:var(--pactra-ink)] group-hover:text-[color:var(--pactra-indigo)]">
                   {act.title}
-                </h4>
+                </h3>
                 <p className="text-[12px] leading-snug text-[color:var(--pactra-ink-secondary)]">
                   {act.desc}
                 </p>

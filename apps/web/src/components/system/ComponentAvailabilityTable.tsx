@@ -9,7 +9,13 @@ interface SystemComponentDef {
   category: string;
   icon: typeof Server;
   implementationStatus: "IMPLEMENTED IN CODE" | "PARTIAL IMPLEMENTATION" | "NOT IMPLEMENTED";
-  configurationStatus: (healthData: { payment_test_mode?: boolean } | null) => "CONFIGURED" | "TEST MODE CONFIGURED" | "FRONTEND CONFIGURED" | "NOT CONFIGURED";
+  configurationStatus: (healthData: { payment_test_mode?: boolean } | null) =>
+    | "CONFIGURED"
+    | "TEST MODE CONFIGURED"
+    | "NOT TEST MODE CONFIGURED"
+    | "FRONTEND CONFIGURED"
+    | "NOT CONFIGURED"
+    | "CONFIGURATION NOT OBSERVED";
   runtimeEvidence: (isPending: boolean, isOk: boolean) => "RUNTIME EVIDENCE" | "AWAITING RUNTIME EVIDENCE" | "RUNTIME EVIDENCE UNAVAILABLE" | "NOT RUNTIME VERIFIED";
   runtimeTone: (isPending: boolean, isOk: boolean) => "secure" | "advisory" | "neutral";
   details: string;
@@ -77,7 +83,12 @@ const COMPONENTS: SystemComponentDef[] = [
     category: "Payment Provider Adapter / Payment Rail",
     icon: Layers,
     implementationStatus: "IMPLEMENTED IN CODE",
-    configurationStatus: (health) => (health?.payment_test_mode ? "TEST MODE CONFIGURED" : "TEST MODE CONFIGURED"),
+    configurationStatus: (health) =>
+      health === null
+        ? "CONFIGURATION NOT OBSERVED"
+        : health.payment_test_mode
+        ? "TEST MODE CONFIGURED"
+        : "NOT TEST MODE CONFIGURED",
     runtimeEvidence: () => "NOT RUNTIME VERIFIED",
     runtimeTone: () => "neutral",
     details: "Orders API integration and constant-time HMAC-SHA256 webhook signature verification.",

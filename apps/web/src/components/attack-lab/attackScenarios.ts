@@ -308,7 +308,7 @@ export const ATTACK_SCENARIOS: Record<AttackScenarioId, AttackScenario> = {
       status: "EXECUTOR UNREACHABLE",
       verdict: "REFUSED",
       policyOutcome: undefined,
-      nextAction: "NONE",
+      nextAction: "CONTINUE_ADMIT",
       reasonCodes: ["CAPABILITY_DENIED"],
       explanation: "Caller principal buyer-agent lacks required payment.execute capability. Privileged payment executor was never invoked.",
     },

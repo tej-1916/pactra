@@ -14,10 +14,10 @@ export function AiBuyerPanel({
   rationale: string;
 }) {
   return (
-    <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] p-4 space-y-3">
+    <div className="rounded-lg border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface-2)] p-4 space-y-3 min-w-0 max-w-full">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Brain className="size-4 text-[#9D9BE7]" />
+          <Brain className="size-4 text-[color:var(--pactra-indigo)]" />
           <span className="font-display text-[14px] font-bold text-[color:var(--pactra-ink)]">
             AI BUYER (PROPOSAL)
           </span>
@@ -28,11 +28,11 @@ export function AiBuyerPanel({
       </div>
 
       {/* Query */}
-      <div className="rounded bg-[color:var(--pactra-surface-3)] p-2.5 space-y-1">
+      <div className="rounded bg-[color:var(--pactra-surface-3)] p-2.5 space-y-1 min-w-0">
         <span className="font-mono text-[10px] font-bold text-[color:var(--pactra-ink-muted)] uppercase tracking-wider">
           AI MISSION QUERY
         </span>
-        <p className="font-mono text-[12.5px] font-semibold text-white">
+        <p className="font-mono text-[12.5px] font-semibold text-[color:var(--pactra-ink)] break-words">
           &quot;{missionQuery}&quot;
         </p>
       </div>
@@ -67,10 +67,10 @@ export function AiBuyerPanel({
       </div>
 
       {/* Product Truth Notice */}
-      <div className="rounded border border-[#7C78E2]/30 bg-[#15183F]/40 p-2.5 text-[11px] leading-relaxed text-[#BBB9F5] flex items-start gap-2">
-        <AlertCircle className="size-3.5 text-[#9D9BE7] shrink-0 mt-0.5" />
+      <div className="rounded border border-[color:var(--pactra-indigo)]/30 bg-[color:var(--pactra-surface-3)] p-2.5 text-[11px] leading-relaxed text-[color:var(--pactra-ink-secondary)] flex items-start gap-2">
+        <AlertCircle className="size-3.5 text-[color:var(--pactra-indigo)] shrink-0 mt-0.5" />
         <div>
-          <span className="font-mono font-bold text-white uppercase">PRODUCT TRUTH:</span>{" "}
+          <span className="font-mono font-bold text-[color:var(--pactra-ink)] uppercase">PRODUCT TRUTH:</span>{" "}
           AI output is proposal data, not transaction authority. The model selects a candidate ID; it cannot authorize funds or bind terms.
         </div>
       </div>
