@@ -63,7 +63,7 @@ export function AttackLabConsole() {
           </span>
           <Link
             href="/commerce"
-            className="inline-flex items-center gap-1.5 font-bold text-[color:var(--pactra-indigo)] hover:text-[#9D9BE7] transition-colors"
+            className="inline-flex items-center gap-1.5 font-bold text-[color:var(--pactra-indigo)] hover:text-[color:var(--pactra-indigo-bright)] transition-colors"
           >
             See provider uncertainty handling in Live Commerce
             <ArrowRight className="size-3.5" />

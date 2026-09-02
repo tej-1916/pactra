@@ -7,20 +7,19 @@ import { Button } from "@/components/ui/Button";
 import { SignatureTrustGraph } from "./SignatureTrustGraph";
 import { TrustRail } from "./TrustRail";
 
-// Static SSR-stable Animation Variants
+// Progressive enhancement: SSR is visible by default (opacity: 1) so no-JS browsers
+// display all critical hero content without requiring JS execution.
 const containerVariants: Variants = {
-  hidden: { opacity: 0 },
   visible: {
     opacity: 1,
     transition: {
-      staggerChildren: 0.1,
-      delayChildren: 0.05,
+      staggerChildren: 0.08,
+      delayChildren: 0.04,
     },
   },
 };
 
 const itemVariants: Variants = {
-  hidden: { opacity: 0, y: 6 },
   visible: {
     opacity: 1,
     y: 0,
@@ -29,11 +28,10 @@ const itemVariants: Variants = {
 };
 
 const graphVariants: Variants = {
-  hidden: { opacity: 0, scale: 0.985 },
   visible: {
     opacity: 1,
     scale: 1,
-    transition: { duration: 0.4, delay: 0.2, ease: [0, 0, 0.2, 1] },
+    transition: { duration: 0.4, delay: 0.15, ease: [0, 0, 0.2, 1] },
   },
 };
 
@@ -54,7 +52,7 @@ export function Hero() {
         <motion.div
           className="lg:col-span-6 flex flex-col justify-between space-y-5 sm:space-y-6 min-w-0 w-full max-w-full"
           variants={containerVariants}
-          initial="hidden"
+          initial={false}
           animate="visible"
         >
           <div className="space-y-3.5 sm:space-y-4 min-w-0 w-full">
@@ -112,7 +110,7 @@ export function Hero() {
         <motion.div
           className="lg:col-span-6 w-full min-w-0 max-w-full"
           variants={graphVariants}
-          initial="hidden"
+          initial={false}
           animate="visible"
         >
           <SignatureTrustGraph activeStage={activeStage} onStageChange={setActiveStage} />

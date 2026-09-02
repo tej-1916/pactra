@@ -40,7 +40,7 @@
   --color-ink: var(--pactra-ink);
   --color-ink-2: var(--pactra-ink-secondary);
   --color-ink-3: var(--pactra-ink-muted);
-  --color-ink-4: var(--pactra-periwinkle-light);
+  --color-ink-4: var(--pactra-indigo);
 
   --color-indigo-deep: var(--pactra-indigo-deep);
   --color-indigo-dark: var(--pactra-indigo-dark);
@@ -81,23 +81,23 @@
   --pactra-surface-3: #E4E7F2;
 
   --pactra-line: #DDE1EA;
-  --pactra-line-strong: #C1C0F3;
+  --pactra-line-strong: #B0AEEC;
 
   --pactra-ink: #12162F;
-  --pactra-ink-secondary: #28247A;
-  --pactra-ink-muted: #3A349A;
+  --pactra-ink-secondary: #24206E;
+  --pactra-ink-muted: #38328E;
 
   --pactra-indigo-deep: #1E2160;
-  --pactra-indigo-dark: #28247A;
-  --pactra-indigo: #4B42B9;
-  --pactra-indigo-bright: #5E58D2;
+  --pactra-indigo-dark: #24206E;
+  --pactra-indigo: #4338CA;
+  --pactra-indigo-bright: #4F46E5;
 
-  --pactra-periwinkle: #7C78E2;
-  --pactra-periwinkle-light: #9D9BE7;
+  --pactra-periwinkle: #4338CA;
+  --pactra-periwinkle-light: #5B52D6;
 
   --pactra-success: #04785A;
-  --pactra-warning: #B7791F;
-  --pactra-critical: #C02231;
+  --pactra-warning: #975A16;
+  --pactra-critical: #B91C1C;
 
   --pactra-field: radial-gradient(1000px 600px at 10% -10%, rgba(75, 66, 185, 0.07), transparent 65%),
     radial-gradient(800px 500px at 90% -5%, rgba(124, 120, 226, 0.05), transparent 60%);
@@ -126,20 +126,20 @@
   --pactra-line-strong: rgba(210, 211, 255, 0.3);
 
   --pactra-ink: #F7F7FF;
-  --pactra-ink-secondary: rgba(225, 226, 255, 0.85);
-  --pactra-ink-muted: rgba(225, 226, 255, 0.68);
+  --pactra-ink-secondary: rgba(225, 226, 255, 0.9);
+  --pactra-ink-muted: rgba(225, 226, 255, 0.76);
 
   --pactra-indigo-deep: #1E2160;
   --pactra-indigo-dark: #28247A;
-  --pactra-indigo: #7C78E2;
-  --pactra-indigo-bright: #9D9BE7;
+  --pactra-indigo: #9691EC;
+  --pactra-indigo-bright: #BBB9F5;
 
-  --pactra-periwinkle: #9D9BE7;
+  --pactra-periwinkle: #BBB9F5;
   --pactra-periwinkle-light: #C1C0F3;
 
   --pactra-success: #10B981;
-  --pactra-warning: #F59E0B;
-  --pactra-critical: #EF4444;
+  --pactra-warning: #FBBF24;
+  --pactra-critical: #F87171;
 
   --pactra-field: radial-gradient(1000px 600px at 12% -10%, rgba(94, 88, 210, 0.18), transparent 65%),
     radial-gradient(800px 500px at 88% -5%, rgba(124, 120, 226, 0.15), transparent 60%);

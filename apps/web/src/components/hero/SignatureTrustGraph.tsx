@@ -54,6 +54,16 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
     return () => observer.disconnect();
   }, []);
 
+  // Notify parent on stage change in a clean effect
+  useEffect(() => {
+    let stage: "admit" | "bind" | "execute" | "completed" = "admit";
+    if (currentStepIndex <= 2) stage = "admit";
+    else if (currentStepIndex === 3) stage = "bind";
+    else if (currentStepIndex === 4) stage = "execute";
+    else stage = "completed";
+    onStageChange?.(stage);
+  }, [currentStepIndex, onStageChange]);
+
   // Motion rhythm: One full transaction traversal -> pause 6s -> subtle replay
   // Pauses automatically post-mount if reduced motion is preferred
   useEffect(() => {
@@ -63,19 +73,11 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
     const delay = isEnd ? 6000 : 900;
 
     const timeout = setTimeout(() => {
-      setCurrentStepIndex((prev) => {
-        const next = (prev + 1) % GRAPH_STEPS.length;
-        if (next <= 1) onStageChange?.("admit");
-        else if (next === 2) onStageChange?.("admit");
-        else if (next === 3) onStageChange?.("bind");
-        else if (next === 4) onStageChange?.("execute");
-        else onStageChange?.("completed");
-        return next;
-      });
+      setCurrentStepIndex((prev) => (prev + 1) % GRAPH_STEPS.length);
     }, delay);
 
     return () => clearTimeout(timeout);
-  }, [currentStepIndex, shouldReduceMotion, isVisible, onStageChange]);
+  }, [currentStepIndex, shouldReduceMotion, isVisible]);
 
   const stepId = GRAPH_STEPS[currentStepIndex]?.id || "admit";
 

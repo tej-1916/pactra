@@ -47,7 +47,7 @@ export function WhyPactraSection() {
               PACTRA Control Plane
             </h3>
             <p className="text-[12.5px] leading-relaxed text-[color:var(--pactra-ink-secondary)]">
-              Enforces immutable admission policy, canonical transaction binding, user cryptographic approvals, and zero-trust invariant checks.
+              Enforces deterministic admission policy, canonical transaction binding, user cryptographic approvals, and zero-trust invariant checks.
             </p>
           </div>
           <div className="mt-4 pt-3 border-t border-[color:var(--pactra-line)] relative z-10">

@@ -50,8 +50,6 @@ export interface DemoScenario {
   };
   authorization: {
     scheme: ApprovalScheme;
-    verdict: DecisionVerdict;
-    policyOutcome: PolicyOutcome;
     nextAction: DecisionNextAction;
     signingKeyId?: string;
   };
@@ -115,8 +113,6 @@ export const DEMO_SCENARIOS: Record<Exclude<ScenarioId, "LIVE_RUNTIME">, DemoSce
     },
     authorization: {
       scheme: "POLICY_AUTO",
-      verdict: "SUCCEEDED",
-      policyOutcome: "ALLOW",
       nextAction: "DISPATCH_PAYMENT",
     },
     execute: {
@@ -220,8 +216,6 @@ export const DEMO_SCENARIOS: Record<Exclude<ScenarioId, "LIVE_RUNTIME">, DemoSce
     },
     authorization: {
       scheme: "USER_ED25519",
-      verdict: "PENDING",
-      policyOutcome: "REQUIRE_APPROVAL",
       nextAction: "AWAIT_USER_SIGNATURE",
       signingKeyId: "key_ed25519_user_demo_01",
     },
@@ -311,8 +305,6 @@ export const DEMO_SCENARIOS: Record<Exclude<ScenarioId, "LIVE_RUNTIME">, DemoSce
     },
     authorization: {
       scheme: "POLICY_AUTO",
-      verdict: "ACCEPTED",
-      policyOutcome: "ALLOW",
       nextAction: "DISPATCH_PAYMENT",
     },
     execute: {

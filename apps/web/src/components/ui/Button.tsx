@@ -34,7 +34,7 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
     ref
   ) => {
     const baseStyles =
-      "group relative inline-flex items-center justify-center font-semibold tracking-tight transition-all duration-200 ease-out focus-visible:outline-2 focus-visible:outline-[#7C78E2] focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-50 select-none cursor-pointer";
+      "group relative inline-flex items-center justify-center font-semibold tracking-tight transition-all duration-200 ease-out focus-visible:outline-2 focus-visible:outline-[color:var(--pactra-indigo)] focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-50 select-none cursor-pointer";
 
     const sizeStyles: Record<ButtonSize, string> = {
       sm: "h-9 rounded-full px-4 text-xs gap-1.5",
@@ -44,11 +44,11 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
 
     const variantStyles: Record<ButtonVariant, string> = {
       primary:
-        "bg-[#4B42B9] text-white shadow-md shadow-[#1E2160]/20 border border-[#7C78E2]/40 hover:bg-[#3A349A] hover:border-[#9D9BE7] hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#4B42B9]/30 active:translate-y-0 active:scale-[0.985]",
+        "bg-[color:var(--pactra-indigo)] text-white shadow-md border border-[color:var(--pactra-indigo-bright)]/40 hover:bg-[color:var(--pactra-indigo-dark)] hover:border-[color:var(--pactra-indigo-bright)] hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 active:scale-[0.985]",
       secondary:
-        "bg-[color:var(--pactra-surface-2)] text-[color:var(--pactra-ink)] border border-[color:var(--pactra-line-strong)] hover:bg-[color:var(--pactra-surface-3)] hover:border-[#7C78E2] hover:text-[color:var(--pactra-indigo)] hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.985]",
+        "bg-[color:var(--pactra-surface-2)] text-[color:var(--pactra-ink)] border border-[color:var(--pactra-line-strong)] hover:bg-[color:var(--pactra-surface-3)] hover:border-[color:var(--pactra-indigo)] hover:text-[color:var(--pactra-indigo)] hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.985]",
       dark:
-        "bg-white/10 backdrop-blur-md text-[#F7F7FF] border border-white/20 hover:bg-white/20 hover:border-[#9D9BE7] hover:text-white hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/20 active:translate-y-0 active:scale-[0.985]",
+        "bg-white/10 backdrop-blur-md text-[#F7F7FF] border border-white/20 hover:bg-white/20 hover:border-[color:var(--pactra-indigo-bright)] hover:text-white hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.985]",
       outline:
         "bg-transparent text-[color:var(--pactra-ink)] border border-[color:var(--pactra-line-strong)] hover:bg-[color:var(--pactra-surface-2)] hover:border-[color:var(--pactra-indigo)] active:scale-[0.985]",
       ghost:
@@ -57,11 +57,11 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
 
     const content = (
       <>
-        {/* Animated subtle periwinkle border shimmer overlay for Primary Variant */}
+        {/* Animated subtle border shimmer overlay for Primary Variant */}
         {variant === "primary" && (
           <span
             aria-hidden
-            className="absolute inset-0 rounded-full p-[1px] bg-gradient-to-r from-[#5E58D2] via-[#9D9BE7] via-60% to-[#5E58D2] opacity-40 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none -z-10"
+            className="absolute inset-0 rounded-full p-[1px] bg-gradient-to-r from-[color:var(--pactra-indigo-bright)] via-[color:var(--pactra-periwinkle-light)] via-60% to-[color:var(--pactra-indigo-bright)] opacity-40 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none -z-10"
           />
         )}
 
@@ -73,7 +73,7 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
           <ArrowRight
             className={cn(
               "size-4 shrink-0 transition-transform duration-200 ease-out group-hover:translate-x-1.5",
-              variant === "primary" ? "text-white/90" : variant === "dark" ? "text-[#9D9BE7]" : "text-[color:var(--pactra-indigo)]"
+              variant === "primary" ? "text-white/90" : variant === "dark" ? "text-[color:var(--pactra-indigo-bright)]" : "text-[color:var(--pactra-indigo)]"
             )}
           />
         )}

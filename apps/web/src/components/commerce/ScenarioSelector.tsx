@@ -62,7 +62,7 @@ export function ScenarioSelector({
           onClick={() => onSelectScenario("BENIGN_PURCHASE")}
           className={`rounded-md border p-3 text-left transition-all duration-150 ${
             selectedScenario === "BENIGN_PURCHASE"
-              ? "border-[#7C78E2] bg-[#15183F]/70 shadow-sm"
+              ? "border-[color:var(--pactra-indigo)] bg-[color:var(--pactra-surface-3)] shadow-sm ring-1 ring-[color:var(--pactra-indigo)]/30"
               : "border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] hover:border-[color:var(--pactra-line-strong)]"
           }`}
         >
@@ -86,7 +86,7 @@ export function ScenarioSelector({
           onClick={() => onSelectScenario("USER_APPROVAL")}
           className={`rounded-md border p-3 text-left transition-all duration-150 ${
             selectedScenario === "USER_APPROVAL"
-              ? "border-[#7C78E2] bg-[#15183F]/70 shadow-sm"
+              ? "border-[color:var(--pactra-indigo)] bg-[color:var(--pactra-surface-3)] shadow-sm ring-1 ring-[color:var(--pactra-indigo)]/30"
               : "border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] hover:border-[color:var(--pactra-line-strong)]"
           }`}
         >
@@ -110,16 +110,16 @@ export function ScenarioSelector({
           onClick={() => onSelectScenario("PROVIDER_LOST")}
           className={`rounded-md border p-3 text-left transition-all duration-150 ${
             selectedScenario === "PROVIDER_LOST"
-              ? "border-[#7C78E2] bg-[#15183F]/70 shadow-sm"
+              ? "border-[color:var(--pactra-indigo)] bg-[color:var(--pactra-surface-3)] shadow-sm ring-1 ring-[color:var(--pactra-indigo)]/30"
               : "border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] hover:border-[color:var(--pactra-line-strong)]"
           }`}
         >
           <div className="flex items-center justify-between pb-1">
             <span className="font-mono text-[11.5px] font-bold text-[color:var(--pactra-ink)] flex items-center gap-1.5">
-              <RefreshCw className="size-3.5 text-[#B7791F]" />
+              <RefreshCw className="size-3.5 text-[color:var(--pactra-warning)]" />
               3. Response Lost
             </span>
-            <span className="font-mono text-[9.5px] text-[#B7791F] bg-[#B7791F]/10 px-1.5 py-0.5 rounded font-semibold">
+            <span className="font-mono text-[9.5px] text-[color:var(--pactra-warning)] bg-[color:var(--pactra-warning)]/10 px-1.5 py-0.5 rounded font-semibold">
               RECONCILE
             </span>
           </div>
@@ -134,7 +134,7 @@ export function ScenarioSelector({
           onClick={() => onSelectScenario("LIVE_RUNTIME")}
           className={`rounded-md border p-3 text-left transition-all duration-150 ${
             selectedScenario === "LIVE_RUNTIME"
-              ? "border-[#7C78E2] bg-[#15183F]/70 shadow-sm"
+              ? "border-[color:var(--pactra-indigo)] bg-[color:var(--pactra-surface-3)] shadow-sm ring-1 ring-[color:var(--pactra-indigo)]/30"
               : "border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] hover:border-[color:var(--pactra-line-strong)]"
           }`}
         >
