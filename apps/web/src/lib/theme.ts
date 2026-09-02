@@ -96,7 +96,10 @@ export function setThemePreference(next: ThemePreference): void {
   } catch {
     // See getThemePreference.
   }
-  const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const systemPrefersDark =
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : false;
   document.documentElement.setAttribute("data-theme", resolveTheme(next, systemPrefersDark));
   for (const listener of listeners) listener();
 }

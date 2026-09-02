@@ -100,8 +100,13 @@ function write(entries: RegisteredMission[]) {
   emit();
 }
 
+const emptySubscribe = () => () => {};
+const getClientHydrated = () => true;
+const getServerHydrated = () => false;
+
 export function useMissionRegister() {
   const missions = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const hydrated = useSyncExternalStore(emptySubscribe, getClientHydrated, getServerHydrated);
 
   const register = useCallback((entry: RegisteredMission) => {
     const current = getSnapshot();
@@ -115,13 +120,6 @@ export function useMissionRegister() {
   const clear = useCallback(() => {
     write([]);
   }, []);
-
-  /**
-   * True once the client snapshot is in use. Consumers render a skeleton until
-   * then rather than briefly showing "no missions", which would read as a
-   * statement about the system rather than about hydration.
-   */
-  const hydrated = typeof window !== "undefined";
 
   return { missions, hydrated, register, forget, clear };
 }

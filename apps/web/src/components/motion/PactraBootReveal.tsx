@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
 export const BOOT_SESSION_KEY = "pactra_boot_seen";
@@ -9,42 +9,44 @@ export interface PactraBootRevealProps {
   onComplete?: () => void;
 }
 
+const emptySubscribe = () => () => {};
+const getClientSeen = () => {
+  try {
+    return sessionStorage.getItem(BOOT_SESSION_KEY) === "true";
+  } catch {
+    return true;
+  }
+};
+const getServerSeen = () => true;
+
 export function PactraBootReveal({ onComplete }: PactraBootRevealProps) {
   const shouldReduceMotion = useReducedMotion();
-  const [isVisible, setIsVisible] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return sessionStorage.getItem(BOOT_SESSION_KEY) !== "true";
-    } catch {
-      return false;
-    }
-  });
-
-  const active = isVisible && !shouldReduceMotion;
+  const alreadySeen = useSyncExternalStore(emptySubscribe, getClientSeen, getServerSeen);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    if (!active) {
+    if (shouldReduceMotion || alreadySeen) {
       onComplete?.();
       return;
     }
 
-    // Mark as seen for subsequent route navigations
     try {
       sessionStorage.setItem(BOOT_SESSION_KEY, "true");
     } catch {
       // Ignore storage errors in restricted contexts
     }
 
-    // Fast 1.1s timeline hand-off
     const timer = setTimeout(() => {
-      setIsVisible(false);
+      setDismissed(true);
       onComplete?.();
     }, 1150);
 
     return () => clearTimeout(timer);
-  }, [active, onComplete]);
+  }, [shouldReduceMotion, alreadySeen, onComplete]);
 
-  if (!active) return null;
+  const isVisible = !alreadySeen && !dismissed && !shouldReduceMotion;
+
+  if (!isVisible) return null;
 
   return (
     <AnimatePresence>

@@ -40,7 +40,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
-      data-theme="light"
       className={`${inter.variable} ${spaceGrotesk.variable} ${ibmPlexMono.variable}`}
       suppressHydrationWarning
     >

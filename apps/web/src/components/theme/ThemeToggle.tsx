@@ -40,11 +40,12 @@ export function ThemeToggle({ className }: { className?: string }) {
   // writes to the DOM, not to React state.
   useEffect(() => {
     if (preference !== "system") return;
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const sync = () =>
       document.documentElement.setAttribute("data-theme", query.matches ? "dark" : "light");
-    query.addEventListener("change", sync);
-    return () => query.removeEventListener("change", sync);
+    query.addEventListener?.("change", sync);
+    return () => query.removeEventListener?.("change", sync);
   }, [preference]);
 
   return (

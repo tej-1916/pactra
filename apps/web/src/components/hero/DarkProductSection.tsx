@@ -210,7 +210,7 @@ DecisionTraceEntry {
             <code>{current.code}</code>
           </pre>
 
-          <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-[#9D9BE7]">
+          <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#9D9BE7]">
             <span className="flex items-center gap-1.5">
               <ShieldCheck className="size-3.5 text-[#04785A]" />
               AUTHORITATIVE CONTRACT ENFORCED
