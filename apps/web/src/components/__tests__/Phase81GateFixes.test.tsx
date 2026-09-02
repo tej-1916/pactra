@@ -1,4 +1,6 @@
 import { render, screen, act, renderHook } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
+import { hydrateRoot } from "react-dom/client";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Hero } from "@/components/hero/Hero";
 import { SignatureTrustGraph } from "@/components/hero/SignatureTrustGraph";
@@ -190,10 +192,20 @@ describe("Phase 8.2 Default Theme Contract & matchMedia Isolation", () => {
   });
 });
 
-describe("Phase 8.2 Reduced-Motion Hydration & Security Semantics", () => {
+describe("Phase 8.3 SSR & Hydration Stability Under Reduced Motion", () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
+    mockUseReducedMotion.mockReturnValue(false);
+    mockMatchMedia(false);
+    Object.defineProperty(window, "IntersectionObserver", {
+      writable: true,
+      value: vi.fn().mockImplementation(() => ({
+        observe: vi.fn(),
+        unobserve: vi.fn(),
+        disconnect: vi.fn(),
+      })),
+    });
   });
 
   it("7. useMissionRegister initial render starts with hydrated: false and transitions after mount", () => {
@@ -201,38 +213,114 @@ describe("Phase 8.2 Reduced-Motion Hydration & Security Semantics", () => {
     expect(result.current.hydrated).toBe(true);
   });
 
-  it("8. SignatureTrustGraph renders identical status text with reduced motion enabled vs disabled", () => {
-    // Render with normal motion
-    mockUseReducedMotion.mockReturnValue(false);
-    const { unmount } = render(<SignatureTrustGraph />);
-
-    expect(screen.getByText("STAGE 1")).toBeInTheDocument();
-    expect(screen.getByText("STAGE 2")).toBeInTheDocument();
-    expect(screen.getByText("STAGE 3")).toBeInTheDocument();
-    unmount();
-
-    // Render with reduced motion
+  it("8. SSR + hydrateRoot of Hero under prefers-reduced-motion produces 0 recoverable errors / 0 mismatches", async () => {
+    // Simulate prefers-reduced-motion: reduce on client
     mockUseReducedMotion.mockReturnValue(true);
-    render(<SignatureTrustGraph />);
+    mockMatchMedia(true);
 
-    // Status text must NOT flip to VERIFIED merely due to motion preference
-    expect(screen.getByText("STAGE 1")).toBeInTheDocument();
-    expect(screen.getByText("STAGE 2")).toBeInTheDocument();
-    expect(screen.getByText("STAGE 3")).toBeInTheDocument();
+    const recoverableErrors: Error[] = [];
+
+    // 1. SSR render
+    const html = renderToString(<Hero />);
+    expect(html).toContain("Make AI commerce");
+    expect(html).toContain("ADMIT");
+    expect(html).toContain("BIND");
+    expect(html).toContain("EXECUTE");
+
+    // 2. Client hydrateRoot
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+    await act(async () => {
+      root = hydrateRoot(container, <Hero />, {
+        onRecoverableError(error) {
+          recoverableErrors.push(error as Error);
+        },
+      });
+    });
+
+    expect(recoverableErrors).toHaveLength(0);
+
+    await act(async () => {
+      root?.unmount();
+    });
+    document.body.removeChild(container);
   });
 
-  it("9. Reduced motion disables pulsing/ping animations without altering deterministic state", () => {
+  it("9. SSR + hydrateRoot of SignatureTrustGraph produces 0 recoverable errors under reduced motion", async () => {
+    mockUseReducedMotion.mockReturnValue(true);
+    mockMatchMedia(true);
+
+    const recoverableErrors: Error[] = [];
+
+    // 1. SSR render
+    const html = renderToString(<SignatureTrustGraph />);
+    expect(html).toContain("STAGE 1");
+    expect(html).toContain("STAGE 2");
+    expect(html).toContain("STAGE 3");
+
+    // 2. Client hydrateRoot
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+    await act(async () => {
+      root = hydrateRoot(container, <SignatureTrustGraph />, {
+        onRecoverableError(error) {
+          recoverableErrors.push(error as Error);
+        },
+      });
+    });
+
+    expect(recoverableErrors).toHaveLength(0);
+
+    await act(async () => {
+      root?.unmount();
+    });
+    document.body.removeChild(container);
+  });
+
+  it("10. Ping and pulse animations use motion-safe CSS classes rather than conditional DOM omission", () => {
     mockUseReducedMotion.mockReturnValue(true);
     const { container } = render(<SignatureTrustGraph />);
 
-    // Ping dot is omitted when reduced motion is true
-    expect(container.querySelector(".animate-ping")).toBeNull();
-    // Pulse animation class is omitted
-    expect(container.querySelector(".animate-pulse")).toBeNull();
+    // Ping element is rendered in DOM for structural stability
+    const pingEl = container.querySelector("[class*='motion-safe:animate-ping']");
+    expect(pingEl).not.toBeNull();
 
-    // But nodes remain fully rendered with truthful stages
+    // Node elements exist and status text is preserved
     expect(screen.getByText("ADMIT")).toBeInTheDocument();
     expect(screen.getByText("BIND")).toBeInTheDocument();
     expect(screen.getByText("EXECUTE")).toBeInTheDocument();
+  });
+
+  it("11. Stored dark theme with reduced motion preserves data-theme='dark' through hydration", async () => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+    mockUseReducedMotion.mockReturnValue(true);
+    mockMatchMedia(true);
+
+    eval(THEME_BOOTSTRAP_SCRIPT);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    const container = document.createElement("div");
+    const html = renderToString(<Hero />);
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+    await act(async () => {
+      root = hydrateRoot(container, <Hero />);
+    });
+
+    // Dark theme was NOT stripped by root hydration
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    await act(async () => {
+      root?.unmount();
+    });
+    document.body.removeChild(container);
   });
 });

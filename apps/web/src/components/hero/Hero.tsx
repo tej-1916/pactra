@@ -1,45 +1,44 @@
 "use client";
 
 import { useState } from "react";
-import { motion, useReducedMotion, type Variants } from "framer-motion";
+import { motion, type Variants } from "framer-motion";
 import { Play } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SignatureTrustGraph } from "./SignatureTrustGraph";
 import { TrustRail } from "./TrustRail";
 
+// Static SSR-stable Animation Variants
+const containerVariants: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.05,
+    },
+  },
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 6 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.3, ease: [0, 0, 0.2, 1] },
+  },
+};
+
+const graphVariants: Variants = {
+  hidden: { opacity: 0, scale: 0.985 },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    transition: { duration: 0.4, delay: 0.2, ease: [0, 0, 0.2, 1] },
+  },
+};
+
 export function Hero() {
   const [activeStage, setActiveStage] = useState<"admit" | "bind" | "execute" | "completed">("admit");
-  const shouldReduceMotion = useReducedMotion();
-
-  // Load Animation Stagger Variants
-  const containerVariants: Variants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.1,
-        delayChildren: 0.05,
-      },
-    },
-  };
-
-  const itemVariants: Variants = {
-    hidden: shouldReduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: { duration: 0.3, ease: [0, 0, 0.2, 1] },
-    },
-  };
-
-  const graphVariants: Variants = {
-    hidden: shouldReduceMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.985 },
-    visible: {
-      opacity: 1,
-      scale: 1,
-      transition: { duration: 0.4, delay: 0.2, ease: [0, 0, 0.2, 1] },
-    },
-  };
 
   return (
     <div className="relative w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-[color:var(--pactra-line)] bg-[color:var(--pactra-surface)] p-4 sm:p-8 lg:p-10 shadow-sm">
