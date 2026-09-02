@@ -36,6 +36,26 @@ export function parseErrorBody(body: unknown): { reasonCode: string | null; deta
   if (body && typeof body === "object" && "detail" in body) {
     const detail = (body as { detail: unknown }).detail;
     if (typeof detail === "string") return { reasonCode: null, detail };
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") {
+            const loc = Array.isArray((item as { loc?: unknown[] }).loc)
+              ? (item as { loc: unknown[] }).loc.filter((p) => p !== "body" && p !== "path").join(".")
+              : "";
+            const msg = typeof (item as { msg?: string }).msg === "string" ? (item as { msg: string }).msg : null;
+            if (loc && msg) return `${loc}: ${msg}`;
+            if (msg) return msg;
+          }
+          return null;
+        })
+        .filter((msg): msg is string => Boolean(msg));
+      return {
+        reasonCode: null,
+        detail: messages.length > 0 ? messages.join("; ") : "Invalid request parameter format.",
+      };
+    }
     if (detail && typeof detail === "object") {
       const record = detail as Record<string, unknown>;
       const reasonCode = typeof record.reason_code === "string" ? record.reason_code : null;

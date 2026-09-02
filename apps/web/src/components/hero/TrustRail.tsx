@@ -92,7 +92,7 @@ export function TrustRail({ activeStage = "admit", className }: TrustRailProps) 
 
               <span
                 className={cn(
-                  "font-mono text-[8px] sm:text-[8.5px] font-semibold px-1 py-0.5 rounded uppercase shrink-0",
+                  "font-mono text-[9px] sm:text-[9.5px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0",
                   stateInfo.status === "completed"
                     ? "bg-[color:var(--pactra-badge-verified-bg)] text-[color:var(--pactra-badge-verified-text)]"
                     : stateInfo.status === "active"

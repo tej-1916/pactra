@@ -3,7 +3,7 @@ import { AuditReplayConsole } from "@/components/audit/AuditReplayConsole";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
-  title: "Audit & Replay | PACTRA",
+  title: "Audit & Replay",
   description: "Inspect deterministic transaction evidence and replay audit logs.",
 };
 

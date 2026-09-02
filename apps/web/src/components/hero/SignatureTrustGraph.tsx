@@ -41,7 +41,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
 
   // Intersection observer for performance & off-screen pause
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]) {
@@ -138,19 +138,19 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                   "flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-3 py-1.5 border backdrop-blur-sm transition-all duration-200",
                   state.active || state.passed
                     ? "bg-[#202160] border-[#9691EC] text-white shadow-xs"
-                    : "bg-[#15183F]/80 border-white/10 text-[#BBB9F5]/70"
+                    : "bg-[#15183F]/80 border-white/10 text-[#BBB9F5]"
                 )}
               >
-                <Bot className="size-3.5 sm:size-4 text-[#9691EC] shrink-0" />
+                <Bot className="size-3.5 sm:size-4 text-[#C7C5F8] shrink-0" />
                 <div className="min-w-0">
                   <span className="font-mono text-[10px] sm:text-[11px] font-bold block leading-tight truncate">AI BUYER</span>
-                  <span className="text-[8px] sm:text-[8.5px] font-mono text-[#BBB9F5]/80 block truncate">Autonomous Agent</span>
+                  <span className="text-[8.5px] sm:text-[9.5px] font-mono text-[#BBB9F5] block truncate">Autonomous Agent</span>
                 </div>
               </div>
             );
           })()}
 
-          <span className="text-[#9691EC] font-mono text-xs shrink-0">➔</span>
+          <span className="text-[#C7C5F8] font-mono text-xs shrink-0 font-bold">➔</span>
 
           {/* MERCHANT OFFER */}
           {(() => {
@@ -161,13 +161,13 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                   "flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-3 py-1.5 border backdrop-blur-sm transition-all duration-200",
                   state.active || state.passed
                     ? "bg-[#202160] border-[#9691EC] text-white shadow-xs"
-                    : "bg-[#15183F]/80 border-white/10 text-[#BBB9F5]/70"
+                    : "bg-[#15183F]/80 border-white/10 text-[#BBB9F5]"
                 )}
               >
-                <Store className="size-3.5 sm:size-4 text-[#9691EC] shrink-0" />
+                <Store className="size-3.5 sm:size-4 text-[#C7C5F8] shrink-0" />
                 <div className="min-w-0">
                   <span className="font-mono text-[10px] sm:text-[11px] font-bold block leading-tight truncate">MERCHANT OFFER</span>
-                  <span className="text-[8px] sm:text-[8.5px] font-mono text-[#BBB9F5]/80 block truncate">Untrusted Input</span>
+                  <span className="text-[8.5px] sm:text-[9.5px] font-mono text-[#BBB9F5] block truncate">Untrusted Input</span>
                 </div>
               </div>
             );
@@ -176,13 +176,13 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
 
         {/* Downward Connector Arrow */}
         <div className="flex flex-col items-center">
-          <div className="h-2 w-0.5 bg-[#9691EC]/60" />
-          <span className="text-[#9691EC] text-[9px] leading-none">▼</span>
+          <div className="h-2 w-0.5 bg-[#C7C5F8]/60" />
+          <span className="text-[#C7C5F8] text-[9px] leading-none">▼</span>
         </div>
 
         {/* 2. MAIN SECURITY CONTROL PLANE CONTAINER */}
         <div className="w-full max-w-md rounded-xl border border-[#7771DF]/40 bg-[#15183F]/90 p-2.5 sm:p-3.5 relative shadow-inner min-w-0">
-          <div className="font-mono text-[8.5px] sm:text-[9px] font-bold tracking-widest text-[#C7C5F8] uppercase mb-2">
+          <div className="font-mono text-[9px] sm:text-[9.5px] font-bold tracking-widest text-[#C7C5F8] uppercase mb-2">
             PACTRA CONTROL PLANE BOUNDARY
           </div>
 
@@ -208,13 +208,13 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                       <span className="font-mono text-[12px] sm:text-[13px] font-extrabold tracking-tight block leading-tight truncate">
                         ADMIT
                       </span>
-                      <span className="text-[8.5px] sm:text-[9.5px] font-sans text-[#BBB9F5] block truncate">Gate 1 · Policy Admission</span>
+                      <span className="text-[9px] sm:text-[9.5px] font-sans text-[#BBB9F5] block truncate">Gate 1 · Policy Admission</span>
                     </div>
                   </div>
 
                   <span
                     className={cn(
-                      "font-mono text-[8.5px] sm:text-[9px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
+                      "font-mono text-[9px] sm:text-[9.5px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
                       state.passed
                         ? "bg-[#34D399] text-[#12162F]"
                         : state.active
@@ -231,21 +231,21 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
             {/* SECONDARY SUPPORT NODES BRANCH: POLICY, PROVENANCE, CAPABILITY */}
             <div className="grid grid-cols-3 gap-1.5 sm:gap-2 w-full min-w-0">
               <div className="flex items-center justify-center gap-1 rounded-md border border-white/10 bg-[#202160]/60 p-1 sm:p-1.5 text-center min-w-0">
-                <Scale className="size-3 text-[#9691EC] shrink-0" />
+                <Scale className="size-3 text-[#C7C5F8] shrink-0" />
                 <span className="font-mono text-[8.5px] sm:text-[9.5px] font-bold text-[#BBB9F5] truncate">POLICY</span>
               </div>
               <div className="flex items-center justify-center gap-1 rounded-md border border-white/10 bg-[#202160]/60 p-1 sm:p-1.5 text-center min-w-0">
-                <Fingerprint className="size-3 text-[#9691EC] shrink-0" />
+                <Fingerprint className="size-3 text-[#C7C5F8] shrink-0" />
                 <span className="font-mono text-[8.5px] sm:text-[9.5px] font-bold text-[#BBB9F5] truncate">PROVENANCE</span>
               </div>
               <div className="flex items-center justify-center gap-1 rounded-md border border-white/10 bg-[#202160]/60 p-1 sm:p-1.5 text-center min-w-0">
-                <Lock className="size-3 text-[#9691EC] shrink-0" />
+                <Lock className="size-3 text-[#C7C5F8] shrink-0" />
                 <span className="font-mono text-[8.5px] sm:text-[9.5px] font-bold text-[#BBB9F5] truncate">CAPABILITY</span>
               </div>
             </div>
 
             {/* Connector Line */}
-            <div className="h-1.5 w-0.5 bg-[#9691EC]/60" />
+            <div className="h-1.5 w-0.5 bg-[#C7C5F8]/60" />
 
             {/* PRIMARY NODE 2: BIND */}
             {(() => {
@@ -267,13 +267,13 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                       <span className="font-mono text-[12px] sm:text-[13px] font-extrabold tracking-tight block leading-tight truncate">
                         BIND
                       </span>
-                      <span className="text-[8.5px] sm:text-[9.5px] font-sans text-[#BBB9F5] block truncate">Gate 2 · Canonical Authorization</span>
+                      <span className="text-[9px] sm:text-[9.5px] font-sans text-[#BBB9F5] block truncate">Gate 2 · Canonical Authorization</span>
                     </div>
                   </div>
 
                   <span
                     className={cn(
-                      "font-mono text-[8.5px] sm:text-[9px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
+                      "font-mono text-[9px] sm:text-[9.5px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
                       state.passed
                         ? "bg-[#34D399] text-[#12162F]"
                         : state.active
@@ -289,14 +289,14 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
 
             {/* SECONDARY SUPPORT NODE: AUTHORIZATION */}
             <div className="flex items-center justify-center gap-1.5 rounded-md border border-white/10 bg-[#202160]/60 px-2 sm:px-3 py-1 text-center w-full min-w-0">
-              <LockKeyhole className="size-3 text-[#9691EC] shrink-0" />
+              <LockKeyhole className="size-3 text-[#C7C5F8] shrink-0" />
               <span className="font-mono text-[9px] sm:text-[10px] font-semibold text-[#BBB9F5] truncate">
                 AUTHORIZATION · Canonical Intent & Scheme
               </span>
             </div>
 
             {/* Connector Line */}
-            <div className="h-1.5 w-0.5 bg-[#9691EC]/60" />
+            <div className="h-1.5 w-0.5 bg-[#C7C5F8]/60" />
 
             {/* PRIMARY NODE 3: EXECUTE */}
             {(() => {
@@ -318,13 +318,13 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                       <span className="font-mono text-[12px] sm:text-[13px] font-extrabold tracking-tight block leading-tight truncate">
                         EXECUTE
                       </span>
-                      <span className="text-[8.5px] sm:text-[9.5px] font-sans text-[#BBB9F5] block truncate">Gate 3 · Payment Execution</span>
+                      <span className="text-[9px] sm:text-[9.5px] font-sans text-[#BBB9F5] block truncate">Gate 3 · Payment Execution</span>
                     </div>
                   </div>
 
                   <span
                     className={cn(
-                      "font-mono text-[8.5px] sm:text-[9px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
+                      "font-mono text-[9px] sm:text-[9.5px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
                       state.passed
                         ? "bg-[#34D399] text-[#12162F]"
                         : state.active
@@ -343,8 +343,8 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
 
         {/* Downward Connector Arrow Exit Control Plane */}
         <div className="flex flex-col items-center">
-          <div className="h-2 w-0.5 bg-[#9691EC]/60" />
-          <span className="text-[#9691EC] text-[9px] leading-none">▼</span>
+          <div className="h-2 w-0.5 bg-[#C7C5F8]/60" />
+          <span className="text-[#C7C5F8] text-[9px] leading-none">▼</span>
         </div>
 
         {/* 3. EXTERNAL OUTPUTS: PAYMENT PROVIDER & AUDIT / REPLAY */}
@@ -358,19 +358,19 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                   "flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-3 py-1.5 border backdrop-blur-sm transition-all duration-200",
                   state.active || state.passed
                     ? "bg-[#202160] border-[#9691EC] text-white shadow-xs"
-                    : "bg-[#15183F]/80 border-white/10 text-[#BBB9F5]/70"
+                    : "bg-[#15183F]/80 border-white/10 text-[#BBB9F5]"
                 )}
               >
-                <CreditCard className="size-3.5 sm:size-4 text-[#9691EC] shrink-0" />
+                <CreditCard className="size-3.5 sm:size-4 text-[#C7C5F8] shrink-0" />
                 <div className="min-w-0">
                   <span className="font-mono text-[10px] sm:text-[11px] font-bold block leading-tight truncate">PAYMENT PROVIDER</span>
-                  <span className="text-[8px] sm:text-[8.5px] font-mono text-[#BBB9F5]/80 block truncate">Provider Evidence</span>
+                  <span className="text-[8.5px] sm:text-[9.5px] font-mono text-[#BBB9F5] block truncate">Provider Evidence</span>
                 </div>
               </div>
             );
           })()}
 
-          <span className="text-[#9691EC] font-mono text-xs shrink-0">➔</span>
+          <span className="text-[#C7C5F8] font-mono text-xs shrink-0 font-bold">➔</span>
 
           {/* AUDIT / REPLAY */}
           {(() => {
@@ -387,7 +387,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                 <FileCheck className="size-3.5 sm:size-4 text-[#34D399] shrink-0" />
                 <div className="min-w-0">
                   <span className="font-mono text-[10px] sm:text-[11px] font-bold block leading-tight truncate">AUDIT / REPLAY</span>
-                  <span className="text-[8px] sm:text-[8.5px] font-mono text-[#34D399] block truncate font-semibold">Decision Trace</span>
+                  <span className="text-[8.5px] sm:text-[9.5px] font-mono text-[#34D399] block truncate font-semibold">Decision Trace</span>
                 </div>
               </div>
             );
@@ -404,7 +404,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
             {stepId}
           </span>
         </div>
-        <div className="text-[8.5px] sm:text-[9.5px] text-[#E2E1FC] break-words">
+        <div className="text-[9px] sm:text-[10px] text-[#E2E1FC] break-words">
           Deterministic 3-Gate Control • Replayable Audit Chain
         </div>
       </div>

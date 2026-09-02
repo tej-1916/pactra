@@ -21,11 +21,25 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "PACTRA — Adversarial Transaction Security",
+    default: "PACTRA — Deterministic Transaction Verification for Agentic Commerce",
     template: "%s · PACTRA",
   },
+  applicationName: "PACTRA",
   description:
-    "Adversarial Transaction Security for Agentic Commerce. AI may propose and select; PACTRA controls authority and payments.",
+    "Deterministic transaction verification, admission, canonical authorization, and payment execution controls for agentic commerce (ADMIT → BIND → EXECUTE).",
+  openGraph: {
+    title: "PACTRA — Deterministic Transaction Verification for Agentic Commerce",
+    description:
+      "Deterministic transaction verification, admission, canonical authorization, and payment execution controls for agentic commerce (ADMIT → BIND → EXECUTE).",
+    siteName: "PACTRA",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "PACTRA — Deterministic Transaction Verification for Agentic Commerce",
+    description:
+      "Deterministic transaction verification, admission, canonical authorization, and payment execution controls for agentic commerce (ADMIT → BIND → EXECUTE).",
+  },
 };
 
 export const viewport: Viewport = {

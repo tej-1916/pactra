@@ -174,10 +174,24 @@ export function MissionDetail({ missionId }: { missionId: string }) {
     );
   }
   if (mission.result.kind === "failed") {
+    const is404 = mission.result.status === 404;
+    const is422 = mission.result.status === 422;
     return (
       <ErrorState
-        title={`Mission not readable (HTTP ${mission.result.status})`}
-        detail={mission.result.detail}
+        title={
+          is404
+            ? "Mission not found (404)"
+            : is422
+            ? "Invalid mission identifier (422)"
+            : `Mission not readable (HTTP ${mission.result.status})`
+        }
+        detail={
+          is404
+            ? "The requested mission identifier was not found in the audit registry."
+            : is422
+            ? "The mission identifier could not be read or does not match the expected format."
+            : mission.result.detail
+        }
       />
     );
   }
