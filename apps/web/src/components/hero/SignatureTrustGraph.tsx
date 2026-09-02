@@ -182,7 +182,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
 
         {/* 2. MAIN SECURITY CONTROL PLANE CONTAINER */}
         <div className="w-full max-w-md rounded-xl border border-[#7771DF]/40 bg-[#15183F]/90 p-2.5 sm:p-3.5 relative shadow-inner min-w-0">
-          <div className="font-mono text-[8.5px] sm:text-[9px] font-bold tracking-widest text-[#BBB9F5]/50 uppercase mb-2">
+          <div className="font-mono text-[8.5px] sm:text-[9px] font-bold tracking-widest text-[#C7C5F8] uppercase mb-2">
             PACTRA CONTROL PLANE BOUNDARY
           </div>
 
@@ -216,10 +216,10 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                     className={cn(
                       "font-mono text-[8.5px] sm:text-[9px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
                       state.passed
-                        ? "bg-[#059669] text-white"
+                        ? "bg-[#34D399] text-[#12162F]"
                         : state.active
-                        ? "bg-[#7771DF] text-white motion-safe:animate-pulse"
-                        : "bg-[#202160] text-[#BBB9F5]"
+                        ? "bg-[#C7C5F8] text-[#12162F] motion-safe:animate-pulse"
+                        : "bg-[#202160] text-[#C7C5F8]"
                     )}
                   >
                     {state.passed ? "VERIFIED ✓" : state.active ? "CHECKING" : "STAGE 1"}
@@ -275,10 +275,10 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                     className={cn(
                       "font-mono text-[8.5px] sm:text-[9px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
                       state.passed
-                        ? "bg-[#059669] text-white"
+                        ? "bg-[#34D399] text-[#12162F]"
                         : state.active
-                        ? "bg-[#7771DF] text-white motion-safe:animate-pulse"
-                        : "bg-[#202160] text-[#BBB9F5]"
+                        ? "bg-[#C7C5F8] text-[#12162F] motion-safe:animate-pulse"
+                        : "bg-[#202160] text-[#C7C5F8]"
                     )}
                   >
                     {state.passed ? "BOUND ✓" : state.active ? "BINDING" : "STAGE 2"}
@@ -326,10 +326,10 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                     className={cn(
                       "font-mono text-[8.5px] sm:text-[9px] font-bold px-1.5 sm:px-2 py-0.5 rounded uppercase tracking-wider shrink-0",
                       state.passed
-                        ? "bg-[#059669] text-white"
+                        ? "bg-[#34D399] text-[#12162F]"
                         : state.active
-                        ? "bg-[#7771DF] text-white motion-safe:animate-pulse"
-                        : "bg-[#202160] text-[#BBB9F5]"
+                        ? "bg-[#C7C5F8] text-[#12162F] motion-safe:animate-pulse"
+                        : "bg-[#202160] text-[#C7C5F8]"
                     )}
                   >
                     {state.passed ? "DISPATCHED" : state.active ? "EXECUTING" : "STAGE 3"}
@@ -380,14 +380,14 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                 className={cn(
                   "flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-3 py-1.5 border backdrop-blur-sm transition-all duration-200",
                   state.active || state.passed
-                    ? "bg-[#059669]/20 border-[#059669] text-white shadow-xs"
-                    : "bg-[#15183F]/80 border-white/10 text-[#BBB9F5]/70"
+                    ? "bg-[#34D399]/20 border-[#34D399] text-white shadow-xs"
+                    : "bg-[#15183F]/80 border-white/10 text-[#C7C5F8]"
                 )}
               >
-                <FileCheck className="size-3.5 sm:size-4 text-[#059669] shrink-0" />
+                <FileCheck className="size-3.5 sm:size-4 text-[#34D399] shrink-0" />
                 <div className="min-w-0">
                   <span className="font-mono text-[10px] sm:text-[11px] font-bold block leading-tight truncate">AUDIT / REPLAY</span>
-                  <span className="text-[8px] sm:text-[8.5px] font-mono text-[#059669] block truncate">Decision Trace</span>
+                  <span className="text-[8px] sm:text-[8.5px] font-mono text-[#34D399] block truncate font-semibold">Decision Trace</span>
                 </div>
               </div>
             );
@@ -404,7 +404,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
             {stepId}
           </span>
         </div>
-        <div className="text-[8.5px] sm:text-[9.5px] text-[#BBB9F5]/80 break-words">
+        <div className="text-[8.5px] sm:text-[9.5px] text-[#E2E1FC] break-words">
           Deterministic 3-Gate Control • Replayable Audit Chain
         </div>
       </div>

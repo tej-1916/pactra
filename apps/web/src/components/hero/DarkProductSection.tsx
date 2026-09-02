@@ -137,7 +137,7 @@ DecisionTraceEntry {
               <div
                 className={cn(
                   "flex size-7 items-center justify-center rounded-lg shrink-0",
-                  isActive ? "bg-[#4B42B9] text-white" : "bg-[#12162F] text-[#9D9BE7]"
+                  isActive ? "bg-[#4B42B9] text-white" : "bg-[#12162F] text-[#C7C5F8]"
                 )}
               >
                 <Icon className="size-4" />
@@ -146,7 +146,7 @@ DecisionTraceEntry {
                 <span className="font-mono text-[11px] font-bold block truncate uppercase">
                   {tab}
                 </span>
-                <span className="text-[9.5px] text-[#9D9BE7]/80 block truncate">
+                <span className="text-[9.5px] text-[#C7C5F8] block truncate font-medium">
                   {tabInfo.subtitle.split(" · ")[0]}
                 </span>
               </div>
@@ -161,15 +161,15 @@ DecisionTraceEntry {
         <div className="lg:col-span-5 flex flex-col justify-between rounded-xl border border-white/15 bg-[#1E2160]/80 p-5 sm:p-6 backdrop-blur-md">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <CurrentIcon className="size-5 text-[#9D9BE7]" />
-              <span className="font-mono text-[11px] font-bold text-[#9D9BE7] tracking-wider uppercase">
+              <CurrentIcon className="size-5 text-[#C7C5F8]" />
+              <span className="font-mono text-[11px] font-bold text-[#C7C5F8] tracking-wider uppercase">
                 {current.subtitle}
               </span>
             </div>
             <h3 className="font-display text-xl font-bold text-white mb-3">
               {current.title}
             </h3>
-            <p className="text-xs sm:text-sm text-[#C1C0F3] leading-relaxed mb-6">
+            <p className="text-xs sm:text-sm text-[#E2E1FC] leading-relaxed mb-6">
               {current.description}
             </p>
           </div>

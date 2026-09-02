@@ -226,8 +226,97 @@ describe("Phase 9 Demo Hardening & Flow Verification", () => {
     expect(primaryBtn?.className).toContain("text-[color:var(--pactra-btn-primary-text)]");
   });
 
-  it("17. TrustRail uses semantic theme variables for success and active stages", () => {
-    const { container } = render(<TrustRail activeStage="completed" />);
-    expect(container.innerHTML).toContain("var(--pactra-success)");
+  it("17. TrustRail uses dedicated accessible badge tokens for active and verified states", () => {
+    const { container: completedContainer } = render(<TrustRail activeStage="completed" />);
+    expect(completedContainer.innerHTML).toContain("var(--pactra-badge-verified-bg)");
+    expect(completedContainer.innerHTML).toContain("var(--pactra-badge-verified-text)");
+
+    const { container: activeContainer } = render(<TrustRail activeStage="admit" />);
+    expect(activeContainer.innerHTML).toContain("var(--pactra-badge-active-bg)");
+    expect(activeContainer.innerHTML).toContain("var(--pactra-badge-active-text)");
+  });
+
+  it("18. WCAG 2.1 contrast calculation verifies badge foreground/background accessibility in both themes", () => {
+    function sRgbToLinear(c: number): number {
+      const v = c / 255;
+      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    }
+
+    function relativeLuminance(hex: string): number {
+      const cleanHex = hex.replace("#", "");
+      const r = parseInt(cleanHex.substring(0, 2), 16);
+      const g = parseInt(cleanHex.substring(2, 4), 16);
+      const b = parseInt(cleanHex.substring(4, 6), 16);
+      return 0.2126 * sRgbToLinear(r) + 0.7152 * sRgbToLinear(g) + 0.0722 * sRgbToLinear(b);
+    }
+
+    function contrast(hex1: string, hex2: string): number {
+      const lum1 = relativeLuminance(hex1);
+      const lum2 = relativeLuminance(hex2);
+      return (Math.max(lum1, lum2) + 0.05) / (Math.min(lum1, lum2) + 0.05);
+    }
+
+    // A. Dark active badge (dark ink #12162F on bright lavender #C7C5F8)
+    expect(contrast("#12162F", "#C7C5F8")).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#12162F", "#C7C5F8")).toBeGreaterThan(9.0);
+
+    // B. Dark verified badge (dark ink #12162F on emerald green #34D399)
+    expect(contrast("#12162F", "#34D399")).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#12162F", "#34D399")).toBeGreaterThan(9.0);
+
+    // C. Light active badge (#FFFFFF on #4338CA)
+    expect(contrast("#FFFFFF", "#4338CA")).toBeGreaterThanOrEqual(4.5);
+
+    // D. Light verified badge (#FFFFFF on #03694F)
+    expect(contrast("#FFFFFF", "#03694F")).toBeGreaterThanOrEqual(4.5);
+
+    // E. Dark Primary CTA (#FFFFFF on #4F46E5)
+    expect(contrast("#FFFFFF", "#4F46E5")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("19. WCAG 2.1 contrast calculation verifies semantic text tokens on dark and light surfaces", () => {
+    function sRgbToLinear(c: number): number {
+      const v = c / 255;
+      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    }
+
+    function relativeLuminance(hex: string): number {
+      const cleanHex = hex.replace("#", "");
+      const r = parseInt(cleanHex.substring(0, 2), 16);
+      const g = parseInt(cleanHex.substring(2, 4), 16);
+      const b = parseInt(cleanHex.substring(4, 6), 16);
+      return 0.2126 * sRgbToLinear(r) + 0.7152 * sRgbToLinear(g) + 0.0722 * sRgbToLinear(b);
+    }
+
+    function contrast(hex1: string, hex2: string): number {
+      const lum1 = relativeLuminance(hex1);
+      const lum2 = relativeLuminance(hex2);
+      return (Math.max(lum1, lum2) + 0.05) / (Math.min(lum1, lum2) + 0.05);
+    }
+
+    const darkSurface3 = "#3A349A";
+    const darkSurface = "#1E2160";
+    const lightSurface = "#FFFFFF";
+    const lightSurface2 = "#F0F2F8";
+
+    // Dark semantic tokens on dark surfaces (all >= 4.5:1)
+    expect(contrast("#34D399", darkSurface3)).toBeGreaterThanOrEqual(4.5); // Success text / ACCEPTED
+    expect(contrast("#34D399", darkSurface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#FBBF24", darkSurface3)).toBeGreaterThanOrEqual(4.5); // Advisory text / WARNING
+    expect(contrast("#FBBF24", darkSurface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#FCA5A5", darkSurface3)).toBeGreaterThanOrEqual(4.5); // Critical text / REFUSED / ATTACK
+    expect(contrast("#FCA5A5", darkSurface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#C7C5F8", darkSurface3)).toBeGreaterThanOrEqual(4.5); // Indigo text / GATE labels
+    expect(contrast("#C7C5F8", darkSurface)).toBeGreaterThanOrEqual(4.5);
+
+    // Light semantic tokens on light surfaces (all >= 4.5:1)
+    expect(contrast("#03694F", lightSurface)).toBeGreaterThanOrEqual(4.5); // Success
+    expect(contrast("#03694F", lightSurface2)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#8A4E0D", lightSurface)).toBeGreaterThanOrEqual(4.5); // Advisory
+    expect(contrast("#8A4E0D", lightSurface2)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#B91C1C", lightSurface)).toBeGreaterThanOrEqual(4.5); // Critical
+    expect(contrast("#B91C1C", lightSurface2)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#4338CA", lightSurface)).toBeGreaterThanOrEqual(4.5); // Indigo
+    expect(contrast("#4338CA", lightSurface2)).toBeGreaterThanOrEqual(4.5);
   });
 });

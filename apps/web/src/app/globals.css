@@ -52,6 +52,11 @@
   --color-btn-primary-bg: var(--pactra-btn-primary-bg);
   --color-btn-primary-text: var(--pactra-btn-primary-text);
 
+  --color-badge-active-bg: var(--pactra-badge-active-bg);
+  --color-badge-active-text: var(--pactra-badge-active-text);
+  --color-badge-verified-bg: var(--pactra-badge-verified-bg);
+  --color-badge-verified-text: var(--pactra-badge-verified-text);
+
   --color-accent: var(--pactra-indigo);
   --color-accent-2: var(--pactra-indigo-bright);
   --color-accent-dim: var(--pactra-surface-2);
@@ -101,6 +106,11 @@
   --pactra-btn-primary-bg: #4338CA;
   --pactra-btn-primary-text: #FFFFFF;
 
+  --pactra-badge-active-bg: #4338CA;
+  --pactra-badge-active-text: #FFFFFF;
+  --pactra-badge-verified-bg: #03694F;
+  --pactra-badge-verified-text: #FFFFFF;
+
   --pactra-success: #03694F;
   --pactra-warning: #8A4E0D;
   --pactra-critical: #B91C1C;
@@ -146,9 +156,14 @@
   --pactra-btn-primary-bg: #4F46E5;
   --pactra-btn-primary-text: #FFFFFF;
 
-  --pactra-success: #10B981;
+  --pactra-badge-active-bg: #C7C5F8;
+  --pactra-badge-active-text: #12162F;
+  --pactra-badge-verified-bg: #34D399;
+  --pactra-badge-verified-text: #12162F;
+
+  --pactra-success: #34D399;
   --pactra-warning: #FBBF24;
-  --pactra-critical: #F87171;
+  --pactra-critical: #FCA5A5;
 
   --pactra-field: radial-gradient(1000px 600px at 12% -10%, rgba(94, 88, 210, 0.18), transparent 65%),
     radial-gradient(800px 500px at 88% -5%, rgba(124, 120, 226, 0.15), transparent 60%);
