@@ -79,8 +79,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
   const stepId = GRAPH_STEPS[currentStepIndex]?.id || "admit";
 
   // Helper to resolve node status
-  const getNodeState = (nodeId: string, nodeStepIdx: number) => {
-    if (shouldReduceMotion) return { active: false, passed: true, status: "VERIFIED" };
+  const getNodeState = (_nodeId: string, nodeStepIdx: number) => {
     if (currentStepIndex > nodeStepIdx) return { active: false, passed: true, status: "VERIFIED" };
     if (currentStepIndex === nodeStepIdx) return { active: true, passed: false, status: "ACTIVE" };
     return { active: false, passed: false, status: "WAITING" };
@@ -108,7 +107,9 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
       <div className="relative z-10 flex flex-wrap items-center justify-between gap-1.5 mb-3 pb-2 border-b border-white/10">
         <div className="flex items-center gap-1.5">
           <span className="relative flex size-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#9691EC] opacity-75" />
+            {!shouldReduceMotion && (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#9691EC] opacity-75" />
+            )}
             <span className="relative inline-flex size-2 rounded-full bg-[#9691EC]" />
           </span>
           <span className="font-mono text-[10.5px] sm:text-[11px] font-bold tracking-wider text-[#BBB9F5] uppercase">
@@ -216,7 +217,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                       state.passed
                         ? "bg-[#059669] text-white"
                         : state.active
-                        ? "bg-[#7771DF] text-white animate-pulse"
+                        ? cn("bg-[#7771DF] text-white", !shouldReduceMotion && "animate-pulse")
                         : "bg-[#202160] text-[#BBB9F5]"
                     )}
                   >
@@ -275,7 +276,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                       state.passed
                         ? "bg-[#059669] text-white"
                         : state.active
-                        ? "bg-[#7771DF] text-white animate-pulse"
+                        ? cn("bg-[#7771DF] text-white", !shouldReduceMotion && "animate-pulse")
                         : "bg-[#202160] text-[#BBB9F5]"
                     )}
                   >
@@ -326,7 +327,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
                       state.passed
                         ? "bg-[#059669] text-white"
                         : state.active
-                        ? "bg-[#7771DF] text-white animate-pulse"
+                        ? cn("bg-[#7771DF] text-white", !shouldReduceMotion && "animate-pulse")
                         : "bg-[#202160] text-[#BBB9F5]"
                     )}
                   >

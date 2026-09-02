@@ -12,8 +12,36 @@ import {
   setThemePreference,
 } from "@/lib/theme";
 
-describe("Phase 8.1 Mobile Hero Reflow & Layout Guards", () => {
+// Mock framer-motion useReducedMotion
+const mockUseReducedMotion = vi.fn();
+vi.mock("framer-motion", async () => {
+  const actual = await vi.importActual("framer-motion");
+  return {
+    ...actual,
+    useReducedMotion: () => mockUseReducedMotion(),
+  };
+});
+
+function mockMatchMedia(matches: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
+describe("Phase 8.1 & 8.2 Mobile Hero Reflow & Layout Guards", () => {
   beforeEach(() => {
+    mockUseReducedMotion.mockReturnValue(false);
+    mockMatchMedia(false);
     Object.defineProperty(window, "IntersectionObserver", {
       writable: true,
       value: vi.fn().mockImplementation(() => ({
@@ -76,41 +104,20 @@ describe("Phase 8.1 Mobile Hero Reflow & Layout Guards", () => {
   });
 });
 
-describe("Phase 8.1 Theme Hydration & Stability", () => {
+describe("Phase 8.2 Default Theme Contract & matchMedia Isolation", () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
   });
 
-  it("6. useMissionRegister initial render starts with hydrated: false and transitions to true after mount", () => {
-    const { result } = renderHook(() => useMissionRegister());
-    // After renderHook effects run, hydrated is true
-    expect(result.current.hydrated).toBe(true);
-  });
+  it("1. No preference stored + OS dark -> strictly LIGHT theme", () => {
+    mockMatchMedia(true); // OS prefers dark
+    expect(window.matchMedia("(prefers-color-scheme: dark)").matches).toBe(true);
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
 
-  it("7. Default theme is light when no preference is stored", () => {
-    expect(getThemePreference()).toBe("system");
-    // Bootstrap script fallback test
     eval(THEME_BOOTSTRAP_SCRIPT);
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
-  });
-
-  it("8. Stored dark theme sets data-theme='dark' before/through hydration", () => {
-    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
-    eval(THEME_BOOTSTRAP_SCRIPT);
-    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-
-    // Render ThemeToggle to ensure it respects stored dark theme
-    render(<ThemeToggle />);
-    const darkRadio = screen.getByRole("radio", { name: /Dark/i });
-    expect(darkRadio).toHaveAttribute("aria-checked", "true");
-    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-  });
-
-  it("9. Stored light theme sets data-theme='light' before/through hydration", () => {
-    window.localStorage.setItem(THEME_STORAGE_KEY, "light");
-    eval(THEME_BOOTSTRAP_SCRIPT);
-    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(getThemePreference()).toBe("light");
 
     render(<ThemeToggle />);
     const lightRadio = screen.getByRole("radio", { name: /Light/i });
@@ -118,7 +125,53 @@ describe("Phase 8.1 Theme Hydration & Stability", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
-  it("10. Switching theme updates localStorage and documentElement synchronously", () => {
+  it("2. No preference stored + OS light -> strictly LIGHT theme", () => {
+    mockMatchMedia(false); // OS prefers light
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
+
+    eval(THEME_BOOTSTRAP_SCRIPT);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(getThemePreference()).toBe("light");
+  });
+
+  it("3. Stored dark + OS light -> strictly DARK theme", () => {
+    mockMatchMedia(false); // OS prefers light
+    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+
+    eval(THEME_BOOTSTRAP_SCRIPT);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(getThemePreference()).toBe("dark");
+
+    render(<ThemeToggle />);
+    const darkRadio = screen.getByRole("radio", { name: /Dark/i });
+    expect(darkRadio).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("4. Stored dark + OS dark -> strictly DARK theme", () => {
+    mockMatchMedia(true); // OS prefers dark
+    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+
+    eval(THEME_BOOTSTRAP_SCRIPT);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(getThemePreference()).toBe("dark");
+  });
+
+  it("5. Stored light + OS dark -> strictly LIGHT theme", () => {
+    mockMatchMedia(true); // OS prefers dark
+    window.localStorage.setItem(THEME_STORAGE_KEY, "light");
+
+    eval(THEME_BOOTSTRAP_SCRIPT);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(getThemePreference()).toBe("light");
+
+    render(<ThemeToggle />);
+    const lightRadio = screen.getByRole("radio", { name: /Light/i });
+    expect(lightRadio).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("6. ThemeToggle persists explicit user selection synchronously", () => {
     render(<ThemeToggle />);
 
     act(() => {
@@ -134,5 +187,52 @@ describe("Phase 8.1 Theme Hydration & Stability", () => {
 
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+});
+
+describe("Phase 8.2 Reduced-Motion Hydration & Security Semantics", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  it("7. useMissionRegister initial render starts with hydrated: false and transitions after mount", () => {
+    const { result } = renderHook(() => useMissionRegister());
+    expect(result.current.hydrated).toBe(true);
+  });
+
+  it("8. SignatureTrustGraph renders identical status text with reduced motion enabled vs disabled", () => {
+    // Render with normal motion
+    mockUseReducedMotion.mockReturnValue(false);
+    const { unmount } = render(<SignatureTrustGraph />);
+
+    expect(screen.getByText("STAGE 1")).toBeInTheDocument();
+    expect(screen.getByText("STAGE 2")).toBeInTheDocument();
+    expect(screen.getByText("STAGE 3")).toBeInTheDocument();
+    unmount();
+
+    // Render with reduced motion
+    mockUseReducedMotion.mockReturnValue(true);
+    render(<SignatureTrustGraph />);
+
+    // Status text must NOT flip to VERIFIED merely due to motion preference
+    expect(screen.getByText("STAGE 1")).toBeInTheDocument();
+    expect(screen.getByText("STAGE 2")).toBeInTheDocument();
+    expect(screen.getByText("STAGE 3")).toBeInTheDocument();
+  });
+
+  it("9. Reduced motion disables pulsing/ping animations without altering deterministic state", () => {
+    mockUseReducedMotion.mockReturnValue(true);
+    const { container } = render(<SignatureTrustGraph />);
+
+    // Ping dot is omitted when reduced motion is true
+    expect(container.querySelector(".animate-ping")).toBeNull();
+    // Pulse animation class is omitted
+    expect(container.querySelector(".animate-pulse")).toBeNull();
+
+    // But nodes remain fully rendered with truthful stages
+    expect(screen.getByText("ADMIT")).toBeInTheDocument();
+    expect(screen.getByText("BIND")).toBeInTheDocument();
+    expect(screen.getByText("EXECUTE")).toBeInTheDocument();
   });
 });

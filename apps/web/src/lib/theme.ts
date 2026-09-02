@@ -1,11 +1,9 @@
 /**
  * Theme selection: light by default, dark as its inverse.
  *
- * Three states, and they are genuinely three: an explicit `light`, an explicit
- * `dark`, and `system` — which is not a colour but a deferral to the OS. The
- * stored value is only ever one of these, and anything else in storage is
- * treated as absent rather than coerced, because a corrupted key must not
- * silently pin a theme a user never chose.
+ * Three states: an explicit `light`, an explicit `dark`, and `system` —
+ * which is not a colour but a deferral to the OS when explicitly chosen.
+ * When no preference is stored, PACTRA defaults strictly to `light`.
  */
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -23,16 +21,16 @@ export function isThemePreference(value: unknown): value is ThemePreference {
  * It exists so the palette is settled by the time the document renders: a page
  * that paints light and then flips to dark is a flash of the wrong answer, and
  * on a console whose colours carry security meaning that is worse than
- * cosmetic. `data-theme` is stamped explicitly for both outcomes, which is also
- * why `globals.css` needs exactly one dark block rather than a
- * `prefers-color-scheme` copy of it that could drift.
+ * cosmetic.
  *
- * Storage access is wrapped: private mode and blocked site data both throw on
- * read, and a theme script must never be the reason a page fails to render.
+ * Default contract:
+ * - Stored "dark" -> dark
+ * - Stored "system" -> OS preference
+ * - Stored "light" / no stored preference / corrupted key -> light
  */
 export const THEME_BOOTSTRAP_SCRIPT = `(function(){try{
 var s=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});
-var d=s==="dark"||((s===null||s==="system")&&window.matchMedia("(prefers-color-scheme: dark)").matches);
+var d=s==="dark"||(s==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);
 document.documentElement.setAttribute("data-theme",d?"dark":"light");
 }catch(e){document.documentElement.setAttribute("data-theme","light");}})();`;
 
@@ -45,21 +43,9 @@ export function resolveTheme(preference: ThemePreference, systemPrefersDark: boo
 // The stored preference, as an external store
 // --------------------------------------------------------------------------- //
 
-/**
- * `localStorage` IS an external store, so it is read through
- * `useSyncExternalStore` rather than copied into React state by an effect.
- *
- * That buys three things at once: a correct server snapshot (`system`, the only
- * thing a server can honestly claim about a preference it cannot see), a
- * tear-free client read, and propagation to every mounted consumer — including
- * from another tab, via the `storage` event. Copying it in with `useEffect`
- * would give a cascading render and a preference that silently diverges between
- * two open tabs.
- */
-
 const listeners = new Set<() => void>();
 let cachedRaw: string | null = null;
-let cached: ThemePreference = "system";
+let cached: ThemePreference = "light";
 
 export function subscribeToThemePreference(listener: () => void): () => void {
   listeners.add(listener);
@@ -75,26 +61,24 @@ export function getThemePreference(): ThemePreference {
   try {
     raw = window.localStorage.getItem(THEME_STORAGE_KEY);
   } catch {
-    // Private mode and blocked site data both throw. The theme still works; it
-    // just is not remembered.
-    return "system";
+    return "light";
   }
   if (raw === cachedRaw) return cached;
   cachedRaw = raw;
-  cached = isThemePreference(raw) ? raw : "system";
+  cached = isThemePreference(raw) ? raw : "light";
   return cached;
 }
 
-/** The server cannot know the OS preference, so it claims nothing. */
+/** The default theme contract is light when no preference exists. */
 export function getServerThemePreference(): ThemePreference {
-  return "system";
+  return "light";
 }
 
 export function setThemePreference(next: ThemePreference): void {
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, next);
   } catch {
-    // See getThemePreference.
+    // Storage failure is survivable by design.
   }
   const systemPrefersDark =
     typeof window !== "undefined" && typeof window.matchMedia === "function"
