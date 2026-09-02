@@ -14,6 +14,7 @@ import { parseErrorBody } from "@/lib/api/result";
 import { Hero } from "@/components/hero/Hero";
 import { TrustRail } from "@/components/hero/TrustRail";
 import { SignatureTrustGraph } from "@/components/hero/SignatureTrustGraph";
+import { ReplayControls } from "@/components/audit/ReplayControls";
 
 describe("Phase 10 Final Submission Polish & Judge Readiness", () => {
   it("1. Root layout metadata has external submission title and truthful scope description", () => {
@@ -115,5 +116,107 @@ describe("Phase 10 Final Submission Polish & Judge Readiness", () => {
     expect(screen.getByText("BIND")).toBeInTheDocument();
     expect(screen.getByText("EXECUTE")).toBeInTheDocument();
     expect(screen.getByText("Deterministic 3-Gate Control • Replayable Audit Chain")).toBeInTheDocument();
+  });
+
+  it("9. SignatureTrustGraph uses ACTIVE NODE label instead of ACTIVE STAGE for 7-node traversal", () => {
+    const { container } = render(<SignatureTrustGraph />);
+    expect(screen.getByText("ACTIVE NODE:")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("ACTIVE STAGE:");
+  });
+
+  it("10. Audit ReplayControls in Demo mode renders authored provenance", () => {
+    const demoProvenance = {
+      origin: "AI Buyer Assistant -> TechCorp Offer Catalog",
+      trustClassification: "UNTRUSTED MERCHANT PROPOSAL -> ACTION",
+      authorityPath: "Deterministic Policy Auto-Approval (POLICY_AUTO)",
+    };
+    render(
+      <ReplayControls
+        currentIndex={0}
+        totalEvents={3}
+        onPrev={() => {}}
+        onNext={() => {}}
+        onReset={() => {}}
+        isDemo={true}
+        provenance={demoProvenance}
+      />
+    );
+    expect(screen.getByText("AI Buyer Assistant -> TechCorp Offer Catalog")).toBeInTheDocument();
+    expect(screen.getByText("UNTRUSTED MERCHANT PROPOSAL -> ACTION")).toBeInTheDocument();
+    expect(screen.getByText("Deterministic Policy Auto-Approval (POLICY_AUTO)")).toBeInTheDocument();
+  });
+
+  it("11. Audit ReplayControls in Runtime mode with pending/none status renders neutral awaiting placeholders and NOT demo provenance", () => {
+    const pendingProvenance = {
+      origin: "Mission m-test-123",
+      trustClassification: "AWAITING RUNTIME EVIDENCE",
+      authorityPath: "Awaiting Replay Resolution...",
+    };
+    const { container } = render(
+      <ReplayControls
+        currentIndex={0}
+        totalEvents={0}
+        onPrev={() => {}}
+        onNext={() => {}}
+        onReset={() => {}}
+        isDemo={false}
+        provenance={pendingProvenance}
+      />
+    );
+    expect(screen.getByText("AWAITING RUNTIME EVIDENCE")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("AI Buyer Assistant -> TechCorp Offer Catalog");
+    expect(container.textContent).not.toContain("POLICY_AUTO");
+  });
+
+  it("12. Audit ReplayControls in Runtime mode with unavailable status renders explicit unavailable placeholders and NOT demo provenance", () => {
+    const unavailableProvenance = {
+      origin: "Mission m-test-123",
+      trustClassification: "RUNTIME EVIDENCE UNAVAILABLE",
+      authorityPath: "UNAVAILABLE",
+    };
+    const { container } = render(
+      <ReplayControls
+        currentIndex={0}
+        totalEvents={0}
+        onPrev={() => {}}
+        onNext={() => {}}
+        onReset={() => {}}
+        isDemo={false}
+        provenance={unavailableProvenance}
+      />
+    );
+    expect(screen.getByText("RUNTIME EVIDENCE UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("AI Buyer Assistant -> TechCorp Offer Catalog");
+    expect(container.textContent).not.toContain("POLICY_AUTO");
+  });
+
+  it("13. Audit ReplayControls in Runtime mode with loaded status renders runtime-derived provenance", () => {
+    const loadedProvenance = {
+      origin: "Mission m-runtime-456",
+      trustClassification: "RUNTIME AUDIT LOG",
+      authorityPath: "Runtime Decision Trace Projection",
+    };
+    render(
+      <ReplayControls
+        currentIndex={0}
+        totalEvents={3}
+        onPrev={() => {}}
+        onNext={() => {}}
+        onReset={() => {}}
+        isDemo={false}
+        runtimeVerification={{
+          auditValid: true,
+          trusted: true,
+          reasonCode: "REPLAY_CONSISTENT",
+          eventsReplayed: 3,
+        }}
+        provenance={loadedProvenance}
+      />
+    );
+    expect(screen.getByText("Mission m-runtime-456")).toBeInTheDocument();
+    expect(screen.getByText("RUNTIME AUDIT LOG")).toBeInTheDocument();
+    expect(screen.getByText("Runtime Decision Trace Projection")).toBeInTheDocument();
+    expect(screen.getByText("AUDIT VALID (REPLAY_CONSISTENT)")).toBeInTheDocument();
   });
 });

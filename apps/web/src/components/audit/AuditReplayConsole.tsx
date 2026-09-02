@@ -45,7 +45,11 @@ export function AuditReplayConsole() {
     };
 
   let traceEntries: DecisionTraceEntry[] = [];
-  let provenance = demoScenario.provenance;
+  let provenance = {
+    origin: "—",
+    trustClassification: "—",
+    authorityPath: "—",
+  };
   let runtimeStatus: "none" | "pending" | "unavailable" | "loaded" = "none";
   let runtimeVerification: {
     auditValid: boolean;
@@ -62,8 +66,18 @@ export function AuditReplayConsole() {
   } else {
     if (!selectedMissionId) {
       runtimeStatus = "none";
+      provenance = {
+        origin: "—",
+        trustClassification: "AWAITING RUNTIME EVIDENCE",
+        authorityPath: "—",
+      };
     } else if (replayQuery.isPending) {
       runtimeStatus = "pending";
+      provenance = {
+        origin: `Mission ${selectedMissionId}`,
+        trustClassification: "AWAITING RUNTIME EVIDENCE",
+        authorityPath: "Awaiting Replay Resolution...",
+      };
     } else if (replayQuery.data && replayQuery.data.kind === "ok") {
       runtimeStatus = "loaded";
       const replayData = replayQuery.data.data;
@@ -89,6 +103,11 @@ export function AuditReplayConsole() {
       }
     } else {
       runtimeStatus = "unavailable";
+      provenance = {
+        origin: selectedMissionId ? `Mission ${selectedMissionId}` : "—",
+        trustClassification: "RUNTIME EVIDENCE UNAVAILABLE",
+        authorityPath: "UNAVAILABLE",
+      };
     }
   }
 

@@ -176,6 +176,7 @@ export function MissionDetail({ missionId }: { missionId: string }) {
   if (mission.result.kind === "failed") {
     const is404 = mission.result.status === 404;
     const is422 = mission.result.status === 422;
+    const is500 = mission.result.status >= 500;
     return (
       <ErrorState
         title={
@@ -183,6 +184,8 @@ export function MissionDetail({ missionId }: { missionId: string }) {
             ? "Mission not found (404)"
             : is422
             ? "Invalid mission identifier (422)"
+            : is500
+            ? `Internal API error (HTTP ${mission.result.status})`
             : `Mission not readable (HTTP ${mission.result.status})`
         }
         detail={
@@ -190,6 +193,8 @@ export function MissionDetail({ missionId }: { missionId: string }) {
             ? "The requested mission identifier was not found in the audit registry."
             : is422
             ? "The mission identifier could not be read or does not match the expected format."
+            : is500
+            ? "The runtime request failed before PACTRA could return a decision."
             : mission.result.detail
         }
       />

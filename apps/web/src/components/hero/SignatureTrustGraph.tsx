@@ -399,7 +399,7 @@ export function SignatureTrustGraph({ activeStage: _activeStage, onStageChange }
       {/* Footer Status Bar */}
       <div className="relative z-10 mt-2.5 flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-white/10 text-[9.5px] sm:text-[10px] font-mono text-[#BBB9F5] min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="text-white font-semibold">ACTIVE STAGE:</span>
+          <span className="text-white font-semibold">ACTIVE NODE:</span>
           <span className="px-1.5 py-0.5 rounded bg-[#3B359E] text-white font-bold uppercase text-[9px]">
             {stepId}
           </span>
