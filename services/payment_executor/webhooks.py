@@ -39,6 +39,7 @@ from packages.schemas.domain import EventType, MissionState, ReasonCode, as_utc,
 from packages.schemas.payment import (
     PaymentIntentState,
     VerifiedWebhookEvent,
+    WebhookEventType,
     WebhookVerificationError,
     webhook_type_to_state,
 )
@@ -109,6 +110,7 @@ async def handle_webhook(
     provider: PaymentProvider,
     body: bytes,
     signature: str,
+    provider_event_id: str | None = None,
     now: datetime | None = None,
 ) -> WebhookOutcome:
     """Verify and apply one webhook delivery. Idempotent."""
@@ -116,7 +118,11 @@ async def handle_webhook(
 
     # ---- 1. VERIFY. Nothing below this line existed before the MAC checked. --
     try:
-        event: VerifiedWebhookEvent = provider.verify_webhook(body=body, signature=signature)
+        event: VerifiedWebhookEvent = provider.verify_webhook(
+            body=body,
+            signature=signature,
+            provider_event_id=provider_event_id,
+        )
     except WebhookVerificationError as failure:
         # NOT AUDITED, deliberately, and this comment says so because the code
         # says so. The audit ledger is mission-scoped, and the only thing that
@@ -127,9 +133,13 @@ async def handle_webhook(
         # Recording rejections belongs in a transport-scoped security log that
         # Phase 4 does not build; until that exists, no rejection event is
         # produced and nothing here claims one is.
+        raise WebhookRejected(failure.reason_code, failure.detail) from failure
+
+    if event.provider != provider.name:
         raise WebhookRejected(
-            ReasonCode.WEBHOOK_SIGNATURE_INVALID.value, failure.detail
-        ) from failure
+            ReasonCode.PROVIDER_RESPONSE_MISMATCH.value,
+            "verified event names a different provider adapter",
+        )
 
     # ---- 2. Resolve the payment from server-side state. ---------------------
     intent = await _find_intent(
@@ -141,6 +151,30 @@ async def handle_webhook(
             f"no payment intent is linked to provider payment {event.provider_payment_id}",
         )
 
+    evidence_mismatches: list[str] = []
+    if event.amount_inr is not None and event.amount_inr != intent.amount_inr:
+        evidence_mismatches.append("amount")
+    if event.currency is not None and event.currency != intent.currency:
+        evidence_mismatches.append("currency")
+    if (
+        event.provider_order_id is not None
+        and intent.provider_order_id is not None
+        and event.provider_order_id != intent.provider_order_id
+    ):
+        evidence_mismatches.append("provider_order_id")
+    target = webhook_type_to_state(event.event_type)
+    if (
+        target is PaymentIntentState.SUCCEEDED
+        and intent.provider_transaction_id is not None
+        and event.provider_transaction_id != intent.provider_transaction_id
+    ):
+        evidence_mismatches.append("provider_transaction_id")
+    if evidence_mismatches:
+        raise WebhookRejected(
+            ReasonCode.PROVIDER_RESPONSE_MISMATCH.value,
+            "verified provider evidence mismatches intent: " + ", ".join(evidence_mismatches),
+        )
+
     # ---- 3. DEDUPLICATE on the UNIQUE index, not on a prior SELECT. ---------
     try:
         async with session.begin_nested():
@@ -150,6 +184,7 @@ async def handle_webhook(
                 provider_event_id=event.provider_event_id,
                 event_type=event.event_type.value,
                 provider_payment_id=event.provider_payment_id,
+                provider_transaction_id=event.provider_transaction_id,
                 payment_intent_id=intent.id,
                 sequence=event.sequence,
                 received_at=moment,
@@ -193,15 +228,60 @@ async def handle_webhook(
             "provider_event_id": event.provider_event_id,
             "event_type": event.event_type.value,
             "sequence": event.sequence,
+            "provider_order_id": event.provider_order_id,
+            "provider_transaction_id": event.provider_transaction_id,
+            "provider_status": event.provider_status,
+            "provider_attempts": event.provider_attempts,
             # NOTE: neither the signature nor the webhook secret is recorded.
         },
     )
 
     # ---- 4. Apply ONLY what the state machine permits. ----------------------
     current = PaymentIntentState(intent.state)
-    target = webhook_type_to_state(event.event_type)
 
     if current == target or is_terminal(current) or not can_transition(current, target):
+        if current == target and current is PaymentIntentState.PROVIDER_PENDING:
+            # payment.authorized and payment.failed are observations about the
+            # same still-open Razorpay Order, not illegal transitions. A failed
+            # Checkout attempt does not terminally fail the Order; the customer
+            # may retry it without creating a second logical payment.
+            reason_code = (
+                ReasonCode.PROVIDER_PAYMENT_ATTEMPT_FAILED.value
+                if event.event_type is WebhookEventType.PAYMENT_ATTEMPT_FAILED
+                else None
+            )
+            _store_provider_evidence(intent, event=event, target=target)
+            intent.last_reason_code = reason_code
+            await append_event(
+                session,
+                mission_id=intent.mission_id,
+                event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
+                actor=ACTOR,
+                payload={
+                    "payment_intent_id": str(intent.id),
+                    "state": current.value,
+                    "provider": event.provider,
+                    "provider_payment_id": event.provider_payment_id,
+                    "provider_order_id": event.provider_order_id,
+                    "provider_transaction_id": event.provider_transaction_id,
+                    "provider_status": event.provider_status,
+                    "provider_attempts": event.provider_attempts,
+                    "provider_event_id": event.provider_event_id,
+                    "source": "webhook",
+                    "reason_code": reason_code,
+                },
+            )
+            stored_event.processed_at = moment
+            stored_event.applied_state = current.value
+            await session.flush()
+            return WebhookOutcome(
+                accepted=True,
+                applied=False,
+                reason_code=reason_code,
+                state=current,
+                payment_intent_id=intent.id,
+            )
+
         # Covers all three ignore cases at once, and they are genuinely one
         # rule: a transition the machine does not allow is not performed. A
         # delayed webhook hits `is_terminal`; an out-of-order one hits
@@ -231,6 +311,12 @@ async def handle_webhook(
             payment_intent_id=intent.id,
         )
 
+    _store_provider_evidence(intent, event=event, target=target)
+    transition_reason = (
+        ReasonCode.PROVIDER_PAYMENT_ATTEMPT_FAILED.value
+        if event.event_type is WebhookEventType.PAYMENT_ATTEMPT_FAILED
+        else None
+    )
     await apply_payment_transition(
         session,
         intent=intent,
@@ -245,9 +331,14 @@ async def handle_webhook(
         payload={
             "provider": event.provider,
             "provider_payment_id": event.provider_payment_id,
+            "provider_order_id": event.provider_order_id,
+            "provider_transaction_id": event.provider_transaction_id,
+            "provider_status": event.provider_status,
+            "provider_attempts": event.provider_attempts,
             "provider_event_id": event.provider_event_id,
             "source": "webhook",
         },
+        reason_code=transition_reason,
     )
 
     if target == PaymentIntentState.SUCCEEDED:
@@ -266,3 +357,20 @@ async def handle_webhook(
         state=target,
         payment_intent_id=intent.id,
     )
+
+
+def _store_provider_evidence(
+    intent: PaymentIntentRow,
+    *,
+    event: VerifiedWebhookEvent,
+    target: PaymentIntentState,
+) -> None:
+    """Apply already-validated safe metadata from a unique verified event."""
+    if event.provider_order_id is not None and intent.provider_order_id is None:
+        intent.provider_order_id = event.provider_order_id
+    if target is PaymentIntentState.SUCCEEDED and event.provider_transaction_id is not None:
+        intent.provider_transaction_id = event.provider_transaction_id
+    if event.provider_status is not None:
+        intent.provider_status = event.provider_status
+    if event.provider_attempts is not None:
+        intent.provider_attempts = max(intent.provider_attempts or 0, event.provider_attempts)

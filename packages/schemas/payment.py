@@ -152,6 +152,16 @@ class ProviderPayment(BaseModel):
     amount_inr: int = Field(ge=0)
     currency: str = Field(min_length=3, max_length=3)
     idempotency_key: str | None = None
+    #: Provider-specific evidence kept separate from the generic reference
+    #: above. For Razorpay, ``provider_payment_id`` remains the Order id for
+    #: backwards-compatible correlation, ``provider_order_id`` makes that
+    #: meaning explicit, and ``provider_transaction_id`` carries the real
+    #: ``pay_...`` id once a captured payment exists.
+    provider_order_id: str | None = Field(default=None, min_length=1, max_length=200)
+    provider_transaction_id: str | None = Field(default=None, min_length=1, max_length=200)
+    provider_receipt: str | None = Field(default=None, min_length=1, max_length=200)
+    provider_status: str | None = Field(default=None, min_length=1, max_length=40)
+    provider_attempts: int | None = Field(default=None, ge=0)
     #: True when the provider returned an ALREADY EXISTING payment for this
     #: idempotency key rather than creating a new one. Provider-side idempotency
     #: is what makes a blind retry safe at the second layer.
@@ -165,12 +175,16 @@ class WebhookEventType(str, Enum):
     PAYMENT_SUCCEEDED = "payment.succeeded"
     PAYMENT_FAILED = "payment.failed"
     PAYMENT_PENDING = "payment.pending"
+    #: A failed Razorpay Checkout attempt does not terminally fail its Order;
+    #: the customer may legitimately retry against the same Order id.
+    PAYMENT_ATTEMPT_FAILED = "payment.attempt_failed"
 
 
 _WEBHOOK_TYPE_TO_STATE: dict[WebhookEventType, PaymentIntentState] = {
     WebhookEventType.PAYMENT_SUCCEEDED: PaymentIntentState.SUCCEEDED,
     WebhookEventType.PAYMENT_FAILED: PaymentIntentState.FAILED_TERMINAL,
     WebhookEventType.PAYMENT_PENDING: PaymentIntentState.PROVIDER_PENDING,
+    WebhookEventType.PAYMENT_ATTEMPT_FAILED: PaymentIntentState.PROVIDER_PENDING,
 }
 
 
@@ -197,6 +211,12 @@ class VerifiedWebhookEvent(BaseModel):
     provider_event_id: str = Field(min_length=1, max_length=200)
     event_type: WebhookEventType
     provider_payment_id: str = Field(min_length=1, max_length=200)
+    provider_order_id: str | None = Field(default=None, min_length=1, max_length=200)
+    provider_transaction_id: str | None = Field(default=None, min_length=1, max_length=200)
+    amount_inr: int | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    provider_status: str | None = Field(default=None, min_length=1, max_length=40)
+    provider_attempts: int | None = Field(default=None, ge=0)
     #: Provider-assigned monotonic ordinal where the provider supplies one.
     #: Used only to DETECT out-of-order delivery for audit; it is never trusted
     #: to authorize a transition. The state machine decides that.
@@ -209,7 +229,8 @@ class WebhookVerificationError(Exception):
 
     reason_code = "WEBHOOK_SIGNATURE_INVALID"
 
-    def __init__(self, provider: str, detail: str) -> None:
+    def __init__(self, provider: str, detail: str, *, reason_code: str | None = None) -> None:
+        self.reason_code = reason_code or type(self).reason_code
         super().__init__(f"{self.reason_code}: {detail}")
         self.provider = provider
         self.detail = detail

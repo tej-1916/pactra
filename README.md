@@ -581,16 +581,18 @@ What is genuinely implemented and tested offline: the test-mode guard and
 webhook signature verification (`X-Razorpay-Signature` = hex HMAC-SHA256 of the
 raw body, per Razorpay's documentation). Three limitations, stated as gaps:
 
-1. **Razorpay does not document receipt uniqueness.** PACTRA sends its
-   idempotency key as the Order `receipt` and reconciles via
-   `GET /v1/orders?receipt=…`. That is a *correlation handle*, not provider-side
-   idempotency, and it is not claimed as such. Duplicate prevention rests
-   entirely on PACTRA's own `UNIQUE(idempotency_key)` and the
-   PROVIDER_PENDING/reconciliation path — which is why those were built without
-   assuming provider help. If a receipt search returns more than one order, the
-   adapter **refuses** rather than adopting one arbitrarily: two orders for one
-   receipt is the duplicate this phase exists to detect, and picking the first
-   would resolve the lookup by discarding the evidence.
+1. **Remote-Order idempotency has a mandatory provider precondition.** PACTRA
+   guarantees that the same idempotency key creates at most one logical PACTRA
+   `PaymentIntent`. It sends a deterministic, bounded digest as the Razorpay
+   Order `receipt` and reconciles via `GET /v1/orders?receipt=…`, but Razorpay
+   receipt search may return empty even when an Order exists. Therefore the
+   at-most-one Razorpay Order claim is conditional on enabling **reject orders
+   with duplicate receipts** in the Razorpay merchant dashboard. Provider
+   construction fails closed unless
+   `RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED=true` acknowledges that manual
+   configuration. The flag does not configure or verify Razorpay. If a receipt
+   search returns more than one order, the adapter **refuses** rather than
+   adopting one arbitrarily.
 2. **An Order is not a Payment.** The server-side API creates an Order; the
    Payment appears when a customer completes Checkout. A complete end-to-end
    Razorpay payment needs a Checkout front end, which Phase 4 does not build.

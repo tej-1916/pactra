@@ -1,28 +1,20 @@
-"""The Razorpay adapter, tested OFFLINE — and only where a test can be honest.
+"""Focused contract tests for the real Razorpay TEST-mode adapter.
 
-Scope is deliberately narrow, and the narrowness is the point. Two things about
-this adapter are verifiable without a network: the test-mode credential guard,
-and webhook signature verification. Both are pure functions of their inputs, and
-both follow published Razorpay behaviour, so a test of them proves something
-real.
-
-The HTTP paths are exercised only against a stub client. That proves this
-adapter's *interpretation* of a response — which status codes mean transient
-versus terminal, that a lost connection is uncertainty rather than failure, that
-paise convert to rupees — but it does NOT prove Razorpay actually replies that
-way. The adapter is labelled ``partial`` for exactly this reason, and nothing
-here upgrades that claim.
-
-No test in this file performs a network call, and no real credential appears in
-it: ``rzp_test_`` keys here are syntactic fixtures, not accounts.
+These tests exercise exact Orders API serialization, bounded failure
+classification, receipt-based lost-response lookup, captured-payment evidence,
+and Razorpay's real webhook envelope/header semantics. They never use a live
+credential or claim that an HTTP stub is live-provider evidence.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
+from typing import Any
 
+import httpx
 import pytest
 from packages.schemas.invariants import InvariantViolation
 from packages.schemas.payment import (
@@ -37,8 +29,10 @@ from services.payment_executor.providers.base import (
     ProviderTransientError,
 )
 from services.payment_executor.providers.razorpay import (
+    RAZORPAY_RECEIPT_MAX_LENGTH,
     RazorpayTestPaymentProvider,
     from_environment,
+    receipt_for_idempotency_key,
 )
 
 KEY_ID = "rzp_test_0000000000"
@@ -55,359 +49,864 @@ REQUEST = PaymentRequest(
 
 
 class StubResponse:
-    def __init__(self, status_code: int, body: dict | None = None) -> None:
+    def __init__(self, status_code: int, body: Any = None, *, json_error: Exception | None = None):
         self.status_code = status_code
-        self._body = body or {}
+        self._body = {} if body is None else body
+        self._json_error = json_error
 
-    def json(self) -> dict:
+    def json(self) -> Any:
+        if self._json_error is not None:
+            raise self._json_error
         return self._body
 
 
 class StubClient:
-    """Records calls and replays scripted responses. Never touches a socket."""
+    """Record calls and delegate to a response, exception, or callable."""
 
-    def __init__(self, *, post=None, get=None) -> None:
+    def __init__(self, *, post: Any = None, get: Any = None) -> None:
         self._post = post
         self._get = get
-        self.post_calls: list[tuple] = []
-        self.get_calls: list[tuple] = []
+        self.post_calls: list[tuple[str, dict[str, Any]]] = []
+        self.get_calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def post(self, url, **kwargs):
+    async def post(self, url: str, **kwargs: Any) -> Any:
         self.post_calls.append((url, kwargs))
-        if isinstance(self._post, Exception):
-            raise self._post
-        return self._post
+        return await self._resolve(self._post, url, kwargs)
 
-    async def get(self, url, **kwargs):
+    async def get(self, url: str, **kwargs: Any) -> Any:
         self.get_calls.append((url, kwargs))
-        if isinstance(self._get, Exception):
-            raise self._get
-        if callable(self._get):
-            return self._get(url, kwargs)
-        return self._get
+        return await self._resolve(self._get, url, kwargs)
+
+    @staticmethod
+    async def _resolve(value: Any, url: str, kwargs: dict[str, Any]) -> Any:
+        if isinstance(value, Exception):
+            raise value
+        if callable(value):
+            result = value(url, kwargs)
+            return await result if hasattr(result, "__await__") else result
+        return value
 
 
-def make_provider(**kwargs) -> RazorpayTestPaymentProvider:
+def make_provider(**kwargs: Any) -> RazorpayTestPaymentProvider:
     return RazorpayTestPaymentProvider(
         key_id=kwargs.pop("key_id", KEY_ID),
         key_secret=kwargs.pop("key_secret", KEY_SECRET),
         webhook_secret=kwargs.pop("webhook_secret", WEBHOOK_SECRET),
+        duplicate_receipt_rejection_enabled=kwargs.pop("duplicate_receipt_rejection_enabled", True),
         **kwargs,
     )
 
 
 def sign(body: bytes, secret: str = WEBHOOK_SECRET) -> str:
-    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
-# --------------------------------------------------------------------------- #
-# 1. Test-mode guard — "no real-money payments" made structural
-# --------------------------------------------------------------------------- #
+def order_entity(
+    *,
+    order_id: str = "order_ABC123",
+    status: str = "created",
+    amount: int = 379900,
+    currency: str = "INR",
+    receipt: str | None = None,
+    attempts: int = 0,
+) -> dict[str, Any]:
+    return {
+        "id": order_id,
+        "entity": "order",
+        "amount": amount,
+        "amount_paid": amount if status == "paid" else 0,
+        "amount_due": 0 if status == "paid" else amount,
+        "currency": currency,
+        "receipt": receipt or receipt_for_idempotency_key(REQUEST.idempotency_key),
+        "status": status,
+        "attempts": attempts,
+        "notes": {},
+        "created_at": 1788134400,
+    }
+
+
+def captured_payment(
+    *,
+    payment_id: str = "pay_XYZ123",
+    order_id: str = "order_ABC123",
+    status: str = "captured",
+    captured: bool | None = True,
+    amount: int = 379900,
+    currency: str = "INR",
+) -> dict[str, Any]:
+    entity: dict[str, Any] = {
+        "id": payment_id,
+        "entity": "payment",
+        "amount": amount,
+        "currency": currency,
+        "status": status,
+        "order_id": order_id,
+    }
+    if captured is not None:
+        entity["captured"] = captured
+    return entity
+
+
+def webhook_body(
+    *,
+    event: str = "payment.captured",
+    payment: dict[str, Any] | None = None,
+    order: dict[str, Any] | None = None,
+) -> bytes:
+    payment = payment or captured_payment()
+    payload: dict[str, Any] = {"payment": {"entity": payment}}
+    if event == "order.paid":
+        payload["order"] = {"entity": order or order_entity(status="paid", attempts=1)}
+    body = {
+        "entity": "event",
+        "account_id": "acc_test",
+        "event": event,
+        "contains": list(payload),
+        "payload": payload,
+        "created_at": 1788134400,
+    }
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+
+
+# ---------------------------------------------------------------------------
+# Credentials and secret handling
+# ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "key_id",
-    ["rzp_live_0000000000", "rzp_0000000000", "", "RZP_TEST_0000000000"],
+    ["rzp_live_0000000000", "rzp_0000000000", "", "RZP_TEST_0000000000", "rzp_test_REPLACE_ME"],
 )
-def test_a_non_test_key_is_refused_before_anything_is_stored(key_id):
-    """A live key must not survive construction, let alone reach the network.
-
-    Checking at call time would leave a live credential sitting in an attribute
-    in the meantime; refusing in ``__init__`` means the object holding it never
-    exists. The uppercase variant is included because a case-insensitive prefix
-    check would accept a live key whose id merely looked shouty.
-    """
+def test_non_test_or_placeholder_key_fails_closed(key_id: str):
     with pytest.raises(InvariantViolation) as exc:
         make_provider(key_id=key_id)
     assert exc.value.invariant == "razorpay.test_mode_only"
 
 
 @pytest.mark.parametrize(
-    "field,invariant",
+    "field,invariant,value",
     [
-        ("key_secret", "razorpay.key_secret_present"),
-        ("webhook_secret", "razorpay.webhook_secret_present"),
+        ("key_secret", "razorpay.key_secret_present", ""),
+        ("key_secret", "razorpay.key_secret_present", "REPLACE_ME"),
+        ("webhook_secret", "razorpay.webhook_secret_present", ""),
+        ("webhook_secret", "razorpay.webhook_secret_present", "REPLACE_ME"),
     ],
 )
-def test_a_missing_secret_raises_instead_of_defaulting(field, invariant):
-    """There is no source-code fallback, because a fallback is a committed secret."""
+def test_missing_or_placeholder_secret_fails_closed(field: str, invariant: str, value: str):
     with pytest.raises(InvariantViolation) as exc:
-        make_provider(**{field: ""})
+        make_provider(**{field: value})
     assert exc.value.invariant == invariant
 
 
-def test_from_environment_refuses_when_secrets_are_absent(monkeypatch):
+def test_from_environment_requires_credentials(monkeypatch: pytest.MonkeyPatch):
     for name in ("RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(InvariantViolation):
         from_environment()
 
 
-def test_the_repr_cannot_leak_a_secret():
-    """Redaction is a property of the type, not of every call site that logs it."""
-    rendered = repr(make_provider())
+@pytest.mark.parametrize("acknowledgement", [None, "false"])
+def test_from_environment_requires_duplicate_receipt_rejection_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+    acknowledgement: str | None,
+):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    if acknowledgement is None:
+        monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", acknowledgement)
+
+    with pytest.raises(InvariantViolation) as exc:
+        from_environment()
+
+    assert exc.value.invariant == "razorpay.duplicate_receipt_rejection_acknowledged"
+    rendered = str(exc.value)
     assert KEY_SECRET not in rendered
     assert WEBHOOK_SECRET not in rendered
+
+
+def test_true_duplicate_receipt_rejection_acknowledgement_allows_provider(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
+
+    assert from_environment().name == "razorpay_test"
+
+
+@pytest.mark.parametrize("acknowledgement", [None, "false"])
+def test_production_registry_refuses_razorpay_without_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+    acknowledgement: str | None,
+):
+    from services.payment_executor.registry import ProviderUnavailable, provider_for
+
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    if acknowledgement is None:
+        monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", acknowledgement)
+
+    with pytest.raises(ProviderUnavailable) as exc:
+        provider_for("razorpay_test", app_env="production")
+
+    assert "razorpay.duplicate_receipt_rejection_acknowledged" in exc.value.detail
+    assert KEY_SECRET not in str(exc.value)
+    assert WEBHOOK_SECRET not in str(exc.value)
+
+
+def test_fake_provider_does_not_require_razorpay_deployment_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from services.payment_executor.registry import provider_for
+
+    monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
+
+    assert provider_for("fake", app_env="development").name == "fake"
+
+
+def test_repr_and_settings_never_render_secrets(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
+    provider = from_environment(http_client=StubClient())
+    rendered = repr(provider)
+    from apps.api.pactra.config import Settings
+
+    settings_rendered = repr(Settings())
+    assert KEY_SECRET not in rendered + settings_rendered
+    assert WEBHOOK_SECRET not in rendered + settings_rendered
     assert "REDACTED" in rendered
+    assert "**********" in settings_rendered
 
 
-# --------------------------------------------------------------------------- #
-# 2. Webhook signature verification — faithful to documented Razorpay behaviour
-# --------------------------------------------------------------------------- #
-def razorpay_webhook(
-    *, event: str = "order.paid", order_id: str = "order_ABC123", event_id: str = "evt_1"
-) -> bytes:
-    payload = {
-        "id": event_id,
-        "event": event,
-        "payload": {"order": {"entity": {"id": order_id}}},
+# ---------------------------------------------------------------------------
+# Exact Orders API serialization and bounded failures
+# ---------------------------------------------------------------------------
+async def test_create_order_serializes_amount_currency_receipt_and_basic_auth():
+    client = StubClient(post=StubResponse(200, order_entity()))
+    payment = await make_provider(http_client=client).create_payment(REQUEST)
+
+    url, kwargs = client.post_calls[0]
+    assert url == "https://api.razorpay.com/v1/orders"
+    assert kwargs["json"] == {
+        "amount": 379900,
+        "currency": "INR",
+        "receipt": receipt_for_idempotency_key(REQUEST.idempotency_key),
+        "notes": {
+            "pactra_txn": "a" * 16,
+            "pactra_idem": hashlib.sha256(REQUEST.idempotency_key.encode()).hexdigest()[:16],
+        },
     }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def test_a_valid_signature_verifies_and_parses():
-    provider = make_provider()
-    body = razorpay_webhook()
-    event = provider.verify_webhook(body=body, signature=sign(body))
-    assert event.provider == "razorpay_test"
-    assert event.provider_event_id == "evt_1"
-    assert event.event_type is WebhookEventType.PAYMENT_SUCCEEDED
-    assert event.provider_payment_id == "order_ABC123"
-
-
-def test_a_forged_signature_is_refused():
-    """INVALID WEBHOOK SIGNATURE -> REJECT BEFORE TRUSTING STATE."""
-    provider = make_provider()
-    body = razorpay_webhook()
-    with pytest.raises(WebhookVerificationError):
-        provider.verify_webhook(body=body, signature="0" * 64)
-
-
-def test_a_signature_from_the_wrong_secret_is_refused():
-    provider = make_provider()
-    body = razorpay_webhook()
-    with pytest.raises(WebhookVerificationError):
-        provider.verify_webhook(body=body, signature=sign(body, "some-other-secret"))
-
-
-def test_tampering_with_the_body_invalidates_the_signature():
-    """The MAC covers the RAW bytes, so a single altered field breaks it."""
-    provider = make_provider()
-    original = razorpay_webhook(order_id="order_ABC123")
-    signature = sign(original)
-    tampered = razorpay_webhook(order_id="order_ATTACKER")
-    with pytest.raises(WebhookVerificationError):
-        provider.verify_webhook(body=tampered, signature=signature)
-
-
-@pytest.mark.parametrize(
-    "body",
-    [b"not json at all", b"[1,2,3]", b'"a string"', b"\xff\xfe"],
-)
-def test_a_signed_but_malformed_body_is_still_refused(body):
-    """A valid MAC proves origin, never that the contents are well-formed."""
-    provider = make_provider()
-    with pytest.raises(WebhookVerificationError):
-        provider.verify_webhook(body=body, signature=sign(body))
-
-
-def test_an_unmapped_event_is_refused_rather_than_guessed_at():
-    """An event whose meaning is undocumented must not be mapped onto a state."""
-    provider = make_provider()
-    body = razorpay_webhook(event="payment.dispute.created")
-    with pytest.raises(WebhookVerificationError) as exc:
-        provider.verify_webhook(body=body, signature=sign(body))
-    assert "unsupported" in exc.value.detail
-
-
-def test_a_webhook_without_an_event_id_is_refused():
-    """No event id means no deduplication key, and an undeduplicable webhook
-    cannot be idempotent — so it is refused rather than applied once and hoped
-    about."""
-    provider = make_provider()
-    payload = {"event": "order.paid", "payload": {"order": {"entity": {"id": "order_1"}}}}
-    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    with pytest.raises(WebhookVerificationError) as exc:
-        provider.verify_webhook(body=body, signature=sign(body))
-    assert "event id" in exc.value.detail
-
-
-def test_a_webhook_naming_no_order_is_refused():
-    provider = make_provider()
-    payload = {"id": "evt_9", "event": "order.paid", "payload": {}}
-    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    with pytest.raises(WebhookVerificationError):
-        provider.verify_webhook(body=body, signature=sign(body))
-
-
-def test_a_payment_entity_webhook_correlates_by_its_order_id():
-    """Razorpay nests a payment under ``payload.payment.entity``; the handle
-    PACTRA stored is the ORDER id, so that is what must be extracted."""
-    provider = make_provider()
-    payload = {
-        "id": "evt_5",
-        "event": "payment.captured",
-        "payload": {"payment": {"entity": {"id": "pay_XYZ", "order_id": "order_ABC123"}}},
-    }
-    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    event = provider.verify_webhook(body=body, signature=sign(body))
-    assert event.provider_payment_id == "order_ABC123"
-
-
-# --------------------------------------------------------------------------- #
-# 3. Response interpretation — proven against a stub, NOT against Razorpay
-# --------------------------------------------------------------------------- #
-async def test_a_created_order_maps_paise_back_to_rupees():
-    client = StubClient(
-        post=StubResponse(
-            200,
-            {
-                "id": "order_ABC123",
-                "status": "created",
-                "amount": 379900,
-                "currency": "INR",
-                "receipt": REQUEST.idempotency_key,
-            },
-        )
-    )
-    provider = make_provider(http_client=client)
-    payment = await provider.create_payment(REQUEST)
-
-    assert payment.amount_inr == 3799
-    assert payment.currency == "INR"
-    assert payment.idempotency_key == REQUEST.idempotency_key
+    assert kwargs["auth"] == (KEY_ID, KEY_SECRET)
+    assert isinstance(kwargs["timeout"], httpx.Timeout)
+    assert payment.provider_payment_id == "order_ABC123"
+    assert payment.provider_order_id == "order_ABC123"
+    assert payment.provider_receipt == kwargs["json"]["receipt"]
+    assert payment.provider_status == "created"
+    assert payment.provider_attempts == 0
     assert payment.status is ProviderPaymentStatus.CREATED
-    # The idempotency key travels as the receipt — the correlation handle
-    # reconciliation later looks up.
-    assert client.post_calls[0][1]["json"]["receipt"] == REQUEST.idempotency_key
-    assert client.post_calls[0][1]["json"]["amount"] == 379900
 
 
-async def test_a_transport_failure_is_uncertainty_not_failure():
-    """PROVIDER LOOKUP/CREATE FAILURE -> NEVER ASSUME NOTHING WAS CREATED.
+def test_long_idempotency_key_maps_to_stable_provider_safe_receipt():
+    key = "k" * 200
+    first = receipt_for_idempotency_key(key)
+    assert first == receipt_for_idempotency_key(key)
+    assert len(first) == RAZORPAY_RECEIPT_MAX_LENGTH
+    assert key not in first
+    assert first != receipt_for_idempotency_key("K" * 200)
 
-    The order may have been created before the connection died. Collapsing this
-    into a retryable failure is the duplicate-charge bug.
-    """
-    client = StubClient(post=ConnectionResetError("connection reset"))
-    provider = make_provider(http_client=client)
+
+async def test_overall_timeout_bounds_even_an_injected_hanging_client():
+    async def hang(_url: str, _kwargs: dict[str, Any]) -> StubResponse:
+        await asyncio.sleep(1)
+        return StubResponse(200, order_entity())
+
+    provider = make_provider(http_client=StubClient(post=hang), overall_timeout_seconds=0.01)
+    with pytest.raises(ProviderTimeout) as exc:
+        await provider.create_payment(REQUEST)
+    assert exc.value.reason_code == "PAYMENT_PROVIDER_TIMEOUT"
+    assert KEY_SECRET not in exc.value.detail
+
+
+async def test_transport_failure_is_ambiguous_not_retryable_failure():
+    provider = make_provider(http_client=StubClient(post=httpx.ReadTimeout("lost")))
     with pytest.raises(ProviderTimeout):
         await provider.create_payment(REQUEST)
 
 
-@pytest.mark.parametrize("status_code", [429, 500, 502, 503])
-async def test_rate_limits_and_server_errors_are_transient(status_code):
-    client = StubClient(post=StubResponse(status_code))
-    provider = make_provider(http_client=client)
-    with pytest.raises(ProviderTransientError):
-        await provider.create_payment(REQUEST)
+@pytest.mark.parametrize(
+    "response",
+    [
+        StubResponse(200, ["not-an-object"]),
+        StubResponse(200, json_error=ValueError("bad json")),
+        StubResponse(200, {"id": "order_missing_everything"}),
+        StubResponse(200, order_entity(receipt="wrong-receipt")),
+        StubResponse(200, order_entity(amount=379901)),
+    ],
+)
+async def test_malformed_create_success_is_ambiguous_and_reconcilable(response: StubResponse):
+    with pytest.raises(ProviderTimeout):
+        await make_provider(http_client=StubClient(post=response)).create_payment(REQUEST)
 
 
-@pytest.mark.parametrize("status_code", [400, 401, 403, 404])
-async def test_other_client_errors_are_terminal(status_code):
-    """Razorpay answered and refused; a retry cannot change the answer."""
-    client = StubClient(post=StubResponse(status_code))
-    provider = make_provider(http_client=client)
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+async def test_definitive_create_4xx_is_terminal(status: int):
     with pytest.raises(ProviderTerminalError):
-        await provider.create_payment(REQUEST)
-
-
-async def test_an_unknown_order_status_stays_pending():
-    """Reporting an order PACTRA does not understand as settled would be
-    inventing an outcome. PENDING keeps it in reconciliation."""
-    client = StubClient(
-        post=StubResponse(
-            200, {"id": "order_1", "status": "some_future_status", "amount": 100, "receipt": "k"}
+        await make_provider(http_client=StubClient(post=StubResponse(status))).create_payment(
+            REQUEST
         )
-    )
-    provider = make_provider(http_client=client)
-    payment = await provider.create_payment(REQUEST)
-    assert payment.status is ProviderPaymentStatus.PENDING
 
 
-async def test_a_missing_http_client_never_silently_succeeds():
-    provider = make_provider()
+@pytest.mark.parametrize("status", [500, 502, 503])
+async def test_create_5xx_is_ambiguous_because_order_may_exist(status: int):
+    with pytest.raises(ProviderTimeout):
+        await make_provider(http_client=StubClient(post=StubResponse(status))).create_payment(
+            REQUEST
+        )
+
+
+async def test_create_429_is_retryable_and_duplicate_receipt_400_reconciles():
     with pytest.raises(ProviderTransientError):
-        await provider.create_payment(REQUEST)
+        await make_provider(http_client=StubClient(post=StubResponse(429))).create_payment(REQUEST)
 
-
-# --------------------------------------------------------------------------- #
-# 4. Receipt lookup — the lost-response handle, and its documented weakness
-# --------------------------------------------------------------------------- #
-async def test_an_empty_receipt_search_reports_no_payment():
-    """The one answer that makes re-creating a payment safe."""
-    client = StubClient(get=StubResponse(200, {"items": []}))
-    provider = make_provider(http_client=client)
-    assert await provider.get_payment(idempotency_key="idem-missing") is None
-
-
-async def test_a_single_matching_receipt_is_adopted():
-    client = StubClient(
-        get=StubResponse(
-            200,
-            {
-                "items": [
-                    {
-                        "id": "order_ABC123",
-                        "status": "paid",
-                        "amount": 379900,
-                        "currency": "INR",
-                        "receipt": "idem-rzp-1",
-                    }
-                ]
-            },
-        )
+    duplicate = StubResponse(
+        400, {"error": {"description": "receipt must be unique; value already exists"}}
     )
-    provider = make_provider(http_client=client)
-    payment = await provider.get_payment(idempotency_key="idem-rzp-1")
-    assert payment is not None
-    assert payment.provider_payment_id == "order_ABC123"
-    assert payment.status is ProviderPaymentStatus.SUCCEEDED
-    assert client.get_calls[0][1]["params"] == {"receipt": "idem-rzp-1"}
+    with pytest.raises(ProviderTimeout):
+        await make_provider(http_client=StubClient(post=duplicate)).create_payment(REQUEST)
 
 
-async def test_two_orders_sharing_a_receipt_are_refused_not_arbitrated():
-    """Razorpay does not enforce receipt uniqueness (documented limitation 1).
-
-    Two orders for one receipt IS the duplicate this phase exists to prevent.
-    Returning the first would resolve the lookup by discarding the evidence, and
-    the intent would settle against an arbitrary one of two real orders. The
-    adapter refuses, which leaves the intent uncertain and reconcilable.
-    """
-    client = StubClient(
-        get=StubResponse(
-            200,
-            {
-                "items": [
-                    {"id": "order_1", "status": "paid", "amount": 379900, "receipt": "dup"},
-                    {"id": "order_2", "status": "paid", "amount": 379900, "receipt": "dup"},
-                ]
-            },
-        )
+# ---------------------------------------------------------------------------
+# Receipt/Order reconciliation and real captured payment identity
+# ---------------------------------------------------------------------------
+async def test_empty_receipt_lookup_is_positive_not_found_evidence():
+    client = StubClient(get=StubResponse(200, {"entity": "collection", "items": []}))
+    assert (
+        await make_provider(http_client=client).get_payment(idempotency_key=REQUEST.idempotency_key)
+        is None
     )
-    provider = make_provider(http_client=client)
-    with pytest.raises(ProviderTransientError) as exc:
-        await provider.get_payment(idempotency_key="dup")
-    assert "refusing to adopt one arbitrarily" in exc.value.detail
+    assert client.get_calls[0][1]["params"] == {
+        "receipt": receipt_for_idempotency_key(REQUEST.idempotency_key)
+    }
 
 
-async def test_a_404_on_an_order_id_lookup_means_no_such_payment():
-    client = StubClient(get=StubResponse(404))
-    provider = make_provider(http_client=client)
+async def test_receipt_lookup_recovers_exact_existing_order():
+    order = order_entity(status="created")
+    client = StubClient(get=StubResponse(200, {"entity": "collection", "items": [order]}))
+    recovered = await make_provider(http_client=client).get_payment(
+        idempotency_key=REQUEST.idempotency_key
+    )
+    assert recovered is not None
+    assert recovered.provider_payment_id == "order_ABC123"
+    assert recovered.idempotency_key == REQUEST.idempotency_key
+    assert recovered.status is ProviderPaymentStatus.CREATED
+
+
+async def test_paid_order_lookup_requires_and_persists_one_captured_payment_id():
+    order = order_entity(status="paid", attempts=2)
+
+    def get(url: str, _kwargs: dict[str, Any]) -> StubResponse:
+        if url.endswith("/orders/order_ABC123/payments"):
+            return StubResponse(200, {"entity": "collection", "items": [captured_payment()]})
+        return StubResponse(200, {"entity": "collection", "items": [order]})
+
+    recovered = await make_provider(http_client=StubClient(get=get)).get_payment(
+        idempotency_key=REQUEST.idempotency_key
+    )
+    assert recovered is not None
+    assert recovered.status is ProviderPaymentStatus.SUCCEEDED
+    assert recovered.provider_order_id == "order_ABC123"
+    assert recovered.provider_transaction_id == "pay_XYZ123"
+    assert recovered.provider_attempts == 2
+
+
+async def test_paid_order_without_exactly_one_captured_payment_stays_unresolved():
+    def get(url: str, _kwargs: dict[str, Any]) -> StubResponse:
+        if url.endswith("/payments"):
+            return StubResponse(200, {"entity": "collection", "items": []})
+        return StubResponse(200, order_entity(status="paid", attempts=1))
+
+    with pytest.raises(ProviderTransientError):
+        await make_provider(http_client=StubClient(get=get)).get_payment(
+            provider_payment_id="order_ABC123", idempotency_key=REQUEST.idempotency_key
+        )
+
+
+async def test_duplicate_exact_receipt_results_are_refused_not_arbitrated():
+    order = order_entity()
+    response = StubResponse(200, {"items": [order, {**order, "id": "order_SECOND"}]})
+    with pytest.raises(ProviderTransientError):
+        await make_provider(http_client=StubClient(get=response)).get_payment(
+            idempotency_key=REQUEST.idempotency_key
+        )
+
+
+async def test_lookup_404_is_not_found_but_5xx_and_transport_are_not_absence():
+    provider = make_provider(http_client=StubClient(get=StubResponse(404)))
     assert await provider.get_payment(provider_payment_id="order_gone") is None
 
-
-async def test_a_failed_receipt_lookup_raises_rather_than_reporting_absence():
-    """A lookup that could not be performed is NOT evidence of no payment.
-
-    Returning None here would be the blind-retry bug wearing a different hat:
-    the executor treats None as 'safe to create', so an unreachable provider
-    must raise instead.
-    """
-    client = StubClient(get=StubResponse(503))
-    provider = make_provider(http_client=client)
+    # Razorpay also uses HTTP 400 for credential and retention errors, so it is
+    # not sufficiently specific to prove an Order never existed.
     with pytest.raises(ProviderTransientError):
-        await provider.get_payment(idempotency_key="idem-unreachable")
-
-    client = StubClient(get=ConnectionResetError("reset"))
-    provider = make_provider(http_client=client)
+        await make_provider(http_client=StubClient(get=StubResponse(400))).get_payment(
+            provider_payment_id="order_gone"
+        )
     with pytest.raises(ProviderTransientError):
-        await provider.get_payment(idempotency_key="idem-unreachable")
+        await make_provider(http_client=StubClient(get=StubResponse(503))).get_payment(
+            idempotency_key=REQUEST.idempotency_key
+        )
+    with pytest.raises(ProviderTimeout):
+        await make_provider(http_client=StubClient(get=ConnectionResetError("reset"))).get_payment(
+            idempotency_key=REQUEST.idempotency_key
+        )
+
+
+async def test_lost_create_response_recovers_same_remote_order_and_logical_intent(sessionmaker):
+    """Flagship path: remote side effect survives a lost create response."""
+    from datetime import timedelta
+
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.capability import payment_executor_capabilities
+    from packages.schemas.domain import EventType, utcnow
+    from packages.schemas.payment import PaymentIntentState
+    from services.audit_ledger.ledger import list_events
+    from services.payment_executor.intents import create_payment_intent
+    from services.payment_executor.worker import run_once
+    from sqlalchemy import func, select
+    from tests.conftest import authorized_mission
+
+    class RemoteRazorpay:
+        def __init__(self) -> None:
+            self.orders: dict[str, dict[str, Any]] = {}
+            self.create_calls = 0
+            self.lose_first_create_response = True
+            self.captured = False
+
+        async def post(self, url: str, **kwargs: Any) -> StubResponse:
+            assert url.endswith("/orders")
+            self.create_calls += 1
+            payload = kwargs["json"]
+            remote = order_entity(
+                receipt=payload["receipt"],
+                amount=payload["amount"],
+                currency=payload["currency"],
+            )
+            self.orders[payload["receipt"]] = remote
+            if self.lose_first_create_response:
+                self.lose_first_create_response = False
+                raise httpx.ReadTimeout("response lost after remote commit")
+            return StubResponse(200, remote)
+
+        async def get(self, url: str, **kwargs: Any) -> StubResponse:
+            if url.endswith("/payments"):
+                items = [captured_payment()] if self.captured else []
+                return StubResponse(200, {"entity": "collection", "items": items})
+            if "/orders/order_" in url:
+                return StubResponse(200, next(iter(self.orders.values())))
+            receipt = kwargs["params"]["receipt"]
+            remote = self.orders.get(receipt)
+            return StubResponse(
+                200,
+                {"entity": "collection", "items": [] if remote is None else [remote]},
+            )
+
+    remote = RemoteRazorpay()
+    provider = make_provider(http_client=remote)
+    async with sessionmaker() as setup:
+        mission, authorization, _ = await authorized_mission(setup)
+        created = await create_payment_intent(
+            setup,
+            capabilities=payment_executor_capabilities(),
+            mission_id=mission.id,
+            authorization_id=authorization.authorization_id,
+            idempotency_key=REQUEST.idempotency_key,
+            provider="razorpay_test",
+        )
+        mission_id, intent_id = mission.id, created.intent.id
+        await setup.commit()
+
+    # Preflight sees no Order; create commits remotely then loses its response.
+    await run_once(sessionmaker, provider=provider)
+    async with sessionmaker() as check:
+        uncertain = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert uncertain is not None
+        assert uncertain.state == PaymentIntentState.PROVIDER_PENDING.value
+        assert uncertain.provider_payment_id is None
+    assert remote.create_calls == 1
+    assert len(remote.orders) == 1
+
+    # Reconciliation adopts the exact Order without a second POST or intent.
+    await run_once(sessionmaker, provider=provider)
+    async with sessionmaker() as check:
+        recovered = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert recovered is not None
+        assert recovered.provider_payment_id == "order_ABC123"
+        assert recovered.provider_order_id == "order_ABC123"
+        assert recovered.provider_receipt == receipt_for_idempotency_key(REQUEST.idempotency_key)
+        logical_count = await check.scalar(
+            select(func.count(PaymentIntentRow.id)).where(
+                PaymentIntentRow.idempotency_key == REQUEST.idempotency_key
+            )
+        )
+        assert logical_count == 1
+    assert remote.create_calls == 1
+
+    # Model the later CUSTOMER CHECKOUT result remotely; authenticated polling
+    # records the real pay_... id before declaring success.
+    remote.captured = True
+    stored_order = next(iter(remote.orders.values()))
+    stored_order.update(status="paid", attempts=1, amount_paid=379900, amount_due=0)
+    await run_once(sessionmaker, provider=provider, now=utcnow() + timedelta(seconds=60))
+    async with sessionmaker() as check:
+        settled = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert settled is not None
+        assert settled.state == PaymentIntentState.SUCCEEDED.value
+        assert settled.provider_payment_id == "order_ABC123"
+        assert settled.provider_transaction_id == "pay_XYZ123"
+        events = await list_events(check, mission_id)
+        event_types = [event.event_type for event in events]
+        audit_json = json.dumps([event.payload for event in events], sort_keys=True)
+    assert EventType.PAYMENT_PROVIDER_TIMEOUT.value in event_types
+    assert EventType.PAYMENT_RECONCILED.value in event_types
+    assert EventType.PAYMENT_SUCCEEDED.value in event_types
+    assert KEY_SECRET not in audit_json
+    assert WEBHOOK_SECRET not in audit_json
+    assert remote.create_calls == 1
+
+
+async def _pending_razorpay_intent(sessionmaker, *, key: str):
+    from packages.schemas.capability import payment_executor_capabilities
+    from services.payment_executor.intents import create_payment_intent
+    from services.payment_executor.worker import run_once
+    from tests.conftest import authorized_mission
+
+    receipt = receipt_for_idempotency_key(key)
+    client = StubClient(
+        get=StubResponse(200, {"entity": "collection", "items": []}),
+        post=StubResponse(200, order_entity(receipt=receipt)),
+    )
+    provider = make_provider(http_client=client)
+    async with sessionmaker() as setup:
+        mission, authorization, _ = await authorized_mission(setup)
+        created = await create_payment_intent(
+            setup,
+            capabilities=payment_executor_capabilities(),
+            mission_id=mission.id,
+            authorization_id=authorization.authorization_id,
+            idempotency_key=key,
+            provider="razorpay_test",
+        )
+        mission_id, intent_id = mission.id, created.intent.id
+        await setup.commit()
+    await run_once(sessionmaker, provider=provider)
+    return provider, mission_id, intent_id
+
+
+async def test_real_razorpay_webhook_evidence_settles_once_and_deduplicates(sessionmaker):
+    from apps.api.db.models import PaymentIntentRow, WebhookEventRow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor.webhooks import handle_webhook
+    from sqlalchemy import func, select
+
+    provider, _, intent_id = await _pending_razorpay_intent(
+        sessionmaker, key="razorpay-webhook-success"
+    )
+    body = webhook_body()
+    signature = sign(body)
+    async with sessionmaker() as session:
+        first = await handle_webhook(
+            session,
+            provider=provider,
+            body=body,
+            signature=signature,
+            provider_event_id="evt_real_1",
+        )
+        await session.commit()
+    assert first.applied is True
+    assert first.state is PaymentIntentState.SUCCEEDED
+
+    async with sessionmaker() as session:
+        duplicate = await handle_webhook(
+            session,
+            provider=provider,
+            body=body,
+            signature=signature,
+            provider_event_id="evt_real_1",
+        )
+        await session.commit()
+    assert duplicate.accepted is True
+    assert duplicate.applied is False
+    assert duplicate.reason_code == "WEBHOOK_DUPLICATE"
+
+    async with sessionmaker() as session:
+        intent = await session.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        assert intent.provider_payment_id == "order_ABC123"
+        assert intent.provider_order_id == "order_ABC123"
+        assert intent.provider_transaction_id == "pay_XYZ123"
+        assert intent.provider_status == "captured"
+        count = await session.scalar(select(func.count(WebhookEventRow.id)))
+        assert count == 1
+
+
+async def test_invalid_razorpay_webhook_changes_nothing_and_failed_attempt_stays_pending(
+    sessionmaker,
+):
+    from apps.api.db.models import PaymentIntentRow, WebhookEventRow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor.webhooks import WebhookRejected, handle_webhook
+    from sqlalchemy import func, select
+
+    provider, _, intent_id = await _pending_razorpay_intent(
+        sessionmaker, key="razorpay-webhook-failure"
+    )
+    captured_body = webhook_body()
+    async with sessionmaker() as session:
+        with pytest.raises(WebhookRejected) as invalid:
+            await handle_webhook(
+                session,
+                provider=provider,
+                body=captured_body,
+                signature="0" * 64,
+                provider_event_id="evt_forged",
+            )
+        assert invalid.value.reason_code == "WEBHOOK_SIGNATURE_INVALID"
+        await session.rollback()
+
+    failed_entity = captured_payment(payment_id="pay_FAILED", status="failed", captured=False)
+    failed_body = webhook_body(event="payment.failed", payment=failed_entity)
+    async with sessionmaker() as session:
+        failed = await handle_webhook(
+            session,
+            provider=provider,
+            body=failed_body,
+            signature=sign(failed_body),
+            provider_event_id="evt_failed_attempt",
+        )
+        await session.commit()
+    assert failed.applied is False
+    assert failed.state is PaymentIntentState.PROVIDER_PENDING
+    assert failed.reason_code == "PROVIDER_PAYMENT_ATTEMPT_FAILED"
+
+    async with sessionmaker() as session:
+        intent = await session.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        assert intent.state == PaymentIntentState.PROVIDER_PENDING.value
+        # A failed attempt id cannot occupy the final settlement identity.
+        assert intent.provider_transaction_id is None
+        assert intent.last_reason_code == "PROVIDER_PAYMENT_ATTEMPT_FAILED"
+        count = await session.scalar(select(func.count(WebhookEventRow.id)))
+        assert count == 1
+
+
+async def test_api_route_uses_razorpay_event_id_header_and_never_returns_secrets(
+    client,
+    sessionmaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from apps.api.pactra.config import get_settings
+
+    await _pending_razorpay_intent(sessionmaker, key="razorpay-route-webhook")
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
+    get_settings.cache_clear()
+    body = webhook_body()
+    response = await client.post(
+        "/api/v1/webhooks/razorpay_test",
+        content=body,
+        headers={
+            "X-Razorpay-Signature": sign(body),
+            "X-Razorpay-Event-Id": "evt_route_1",
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "accepted": True,
+        "applied": True,
+        "reason_code": None,
+        "state": "SUCCEEDED",
+    }
+    assert KEY_SECRET not in response.text
+    assert WEBHOOK_SECRET not in response.text
+    get_settings.cache_clear()
+
+
+async def test_api_route_rejects_non_ascii_signature_without_state_or_authority_effect(
+    client,
+    sessionmaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from apps.api.db.models import AuthorizationRow, PaymentIntentRow, WebhookEventRow
+    from apps.api.pactra.config import get_settings
+    from services.audit_ledger.ledger import list_events
+    from sqlalchemy import func, select
+
+    _, mission_id, intent_id = await _pending_razorpay_intent(
+        sessionmaker, key="razorpay-route-non-ascii-signature"
+    )
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
+    get_settings.cache_clear()
+
+    async with sessionmaker() as check:
+        before_intent = await check.get(PaymentIntentRow, intent_id)
+        before_authorization = await check.scalar(
+            select(AuthorizationRow).where(AuthorizationRow.mission_id == mission_id)
+        )
+        assert before_intent is not None
+        assert before_authorization is not None
+        payment_before = (
+            before_intent.state,
+            before_intent.provider_payment_id,
+            before_intent.provider_order_id,
+            before_intent.provider_transaction_id,
+            before_intent.provider_receipt,
+            before_intent.provider_status,
+            before_intent.provider_attempts,
+            before_intent.attempts,
+            before_intent.last_reason_code,
+            before_intent.updated_at,
+        )
+        authority_before = (before_authorization.status, before_authorization.consumed_at)
+        audit_before = [event.event_id for event in await list_events(check, mission_id)]
+        webhooks_before = await check.scalar(select(func.count(WebhookEventRow.id)))
+
+    body = webhook_body()
+    response = await client.post(
+        "/api/v1/webhooks/razorpay_test",
+        content=body,
+        headers=[
+            (b"X-Razorpay-Signature", b"\xff"),
+            (b"X-Razorpay-Event-Id", b"evt_non_ascii_signature"),
+            (b"Content-Type", b"application/json"),
+        ],
+    )
+
+    assert response.status_code == 401, response.text
+    assert response.json() == {"detail": {"reason_code": "WEBHOOK_SIGNATURE_INVALID"}}
+    assert KEY_SECRET not in response.text
+    assert WEBHOOK_SECRET not in response.text
+
+    async with sessionmaker() as check:
+        after_intent = await check.get(PaymentIntentRow, intent_id)
+        after_authorization = await check.scalar(
+            select(AuthorizationRow).where(AuthorizationRow.mission_id == mission_id)
+        )
+        assert after_intent is not None
+        assert after_authorization is not None
+        assert (
+            after_intent.state,
+            after_intent.provider_payment_id,
+            after_intent.provider_order_id,
+            after_intent.provider_transaction_id,
+            after_intent.provider_receipt,
+            after_intent.provider_status,
+            after_intent.provider_attempts,
+            after_intent.attempts,
+            after_intent.last_reason_code,
+            after_intent.updated_at,
+        ) == payment_before
+        assert (after_authorization.status, after_authorization.consumed_at) == authority_before
+        assert [event.event_id for event in await list_events(check, mission_id)] == audit_before
+        assert await check.scalar(select(func.count(WebhookEventRow.id))) == webhooks_before
+
+    get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Real Razorpay webhook envelope and transport event id
+# ---------------------------------------------------------------------------
+def test_valid_captured_webhook_uses_header_event_id_and_preserves_pay_id():
+    body = webhook_body()
+    event = make_provider().verify_webhook(
+        body=body,
+        signature=sign(body),
+        provider_event_id="evt_header_1",
+    )
+    assert event.provider_event_id == "evt_header_1"
+    assert event.provider_payment_id == "order_ABC123"
+    assert event.provider_order_id == "order_ABC123"
+    assert event.provider_transaction_id == "pay_XYZ123"
+    assert event.amount_inr == 3799
+    assert event.currency == "INR"
+    assert event.event_type is WebhookEventType.PAYMENT_SUCCEEDED
+
+
+def test_invalid_signature_is_rejected_before_event_header_or_payload_matters():
+    body = webhook_body()
+    with pytest.raises(WebhookVerificationError) as exc:
+        make_provider().verify_webhook(body=body, signature="0" * 64, provider_event_id="evt_1")
+    assert exc.value.reason_code == "WEBHOOK_SIGNATURE_INVALID"
+
+
+def test_valid_signature_without_event_id_is_rejected_for_idempotency():
+    body = webhook_body()
+    with pytest.raises(WebhookVerificationError) as exc:
+        make_provider().verify_webhook(body=body, signature=sign(body))
+    assert exc.value.reason_code == "WEBHOOK_EVENT_ID_MISSING"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"not-json", b"[]", webhook_body(event="payment.dispute.created")],
+)
+def test_signed_malformed_or_unsupported_payload_is_rejected(body: bytes):
+    with pytest.raises(WebhookVerificationError) as exc:
+        make_provider().verify_webhook(body=body, signature=sign(body), provider_event_id="evt_bad")
+    assert exc.value.reason_code == "WEBHOOK_PAYLOAD_INVALID"
+
+
+def test_tampering_after_signature_changes_is_rejected():
+    original = webhook_body()
+    tampered = webhook_body(payment=captured_payment(order_id="order_ATTACKER"))
+    with pytest.raises(WebhookVerificationError):
+        make_provider().verify_webhook(
+            body=tampered, signature=sign(original), provider_event_id="evt_1"
+        )
+
+
+def test_payment_failed_maps_to_pending_attempt_not_terminal_failure():
+    failed = captured_payment(status="failed", captured=False, payment_id="pay_FAILED")
+    body = webhook_body(event="payment.failed", payment=failed)
+    event = make_provider().verify_webhook(
+        body=body, signature=sign(body), provider_event_id="evt_failed"
+    )
+    assert event.event_type is WebhookEventType.PAYMENT_ATTEMPT_FAILED
+
+
+def test_success_event_requires_captured_provider_evidence():
+    not_captured = captured_payment(status="captured", captured=False)
+    body = webhook_body(payment=not_captured)
+    with pytest.raises(WebhookVerificationError) as exc:
+        make_provider().verify_webhook(
+            body=body, signature=sign(body), provider_event_id="evt_false_success"
+        )
+    assert exc.value.reason_code == "WEBHOOK_PAYLOAD_INVALID"
+
+
+def test_order_paid_entities_must_agree_and_expose_attempts():
+    body = webhook_body(event="order.paid")
+    event = make_provider().verify_webhook(
+        body=body, signature=sign(body), provider_event_id="evt_paid"
+    )
+    assert event.event_type is WebhookEventType.PAYMENT_SUCCEEDED
+    assert event.provider_attempts == 1
+
+    mismatch = webhook_body(
+        event="order.paid", order=order_entity(status="paid", amount=100, attempts=1)
+    )
+    with pytest.raises(WebhookVerificationError):
+        make_provider().verify_webhook(
+            body=mismatch, signature=sign(mismatch), provider_event_id="evt_mismatch"
+        )

@@ -173,6 +173,47 @@ async def test_not_found_makes_the_payment_retryable(sessionmaker):
     assert [e.event_type for e in pending] == [OutboxEventType.PAYMENT_CREATE_REQUESTED.value]
 
 
+async def test_not_found_for_an_already_linked_provider_reference_never_recreates(sessionmaker):
+    """A once-observed remote object cannot be assumed never to have existed."""
+    from datetime import timedelta
+
+    from packages.schemas.domain import utcnow
+
+    provider = FakePaymentProvider(default_fault=FaultMode.PENDING)
+    async with sessionmaker() as setup:
+        mission, authorization, _ = await authorized_mission(setup)
+        result = await create_payment_intent(
+            setup,
+            capabilities=EXECUTOR,
+            mission_id=mission.id,
+            authorization_id=authorization.authorization_id,
+            idempotency_key="idem-linked-not-found",
+            provider="fake",
+        )
+        intent_id = result.intent.id
+        await setup.commit()
+
+    await run_once(sessionmaker, provider=provider)
+    linked = await _intent(sessionmaker, intent_id)
+    assert linked.provider_payment_id is not None
+    assert len(provider.create_calls) == 1
+
+    # Simulate a provider retention/index gap after the id was durably linked.
+    provider.created_payments.clear()
+    provider._by_provider_id.clear()
+    await run_once(sessionmaker, provider=provider, now=utcnow() + timedelta(seconds=60))
+
+    unresolved = await _intent(sessionmaker, intent_id)
+    assert unresolved.state == PaymentIntentState.PROVIDER_PENDING.value
+    assert unresolved.provider_payment_id == linked.provider_payment_id
+    assert len(provider.create_calls) == 1
+    async with sessionmaker() as check:
+        pending = await pending_events_for(check, intent_id)
+    assert [event.event_type for event in pending] == [
+        OutboxEventType.PAYMENT_RECONCILE_REQUESTED.value
+    ]
+
+
 async def test_reconciliation_never_reopens_a_settled_payment(sessionmaker):
     """Idempotent: running it again on a terminal payment changes nothing."""
     provider, _, intent_id = await _uncertain(

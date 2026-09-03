@@ -25,6 +25,7 @@ is the opposite of what the header is for.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -38,6 +39,7 @@ from services.payment_executor.intents import (
 from services.payment_executor.registry import (
     ProviderUnavailable,
     UnknownProvider,
+    event_id_header_for,
     provider_for,
     signature_header_for,
 )
@@ -52,10 +54,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.db.models import Mission, PaymentIntentRow
 from apps.api.db.session import get_session
-from apps.api.pactra.config import get_settings
+from apps.api.pactra.config import Settings, get_settings
 from apps.api.pactra.schemas_api import PaymentIntentOut, WebhookAck
 
 router = APIRouter(prefix="/api/v1", tags=["payments"])
+LOGGER = logging.getLogger("pactra.payment_webhooks")
 
 #: Cap on the accepted idempotency key. A key is an opaque client handle, not a
 #: payload; an unbounded one is a free write-amplification primitive against the
@@ -68,7 +71,14 @@ MAX_IDEMPOTENCY_KEY_LENGTH = 200
 MAX_WEBHOOK_BODY_BYTES = 64 * 1024
 
 
-def _payment_out(row: PaymentIntentRow) -> PaymentIntentOut:
+def _payment_out(row: PaymentIntentRow, *, settings: Settings) -> PaymentIntentOut:
+    provider_key_id = (
+        settings.razorpay_key_id
+        if row.provider == "razorpay_test"
+        and settings.razorpay_key_id.startswith("rzp_test_")
+        and settings.razorpay_key_id != "rzp_test_REPLACE_ME"
+        else None
+    )
     return PaymentIntentOut(
         payment_intent_id=row.id,
         mission_id=row.mission_id,
@@ -79,7 +89,13 @@ def _payment_out(row: PaymentIntentRow) -> PaymentIntentOut:
         currency=row.currency,
         merchant_id=row.merchant_id,
         provider=row.provider,
+        provider_key_id=provider_key_id,
         provider_payment_id=row.provider_payment_id,
+        provider_order_id=row.provider_order_id,
+        provider_transaction_id=row.provider_transaction_id,
+        provider_receipt=row.provider_receipt,
+        provider_status=row.provider_status,
+        provider_attempts=row.provider_attempts,
         attempts=row.attempts,
         last_reason_code=row.last_reason_code,
         created_at=row.created_at,
@@ -188,7 +204,7 @@ async def request_payment(
     # before the caller learns a payment exists to be polled for.
     await session.commit()
     response.status_code = 201 if result.created else 200
-    return _payment_out(result.intent)
+    return _payment_out(result.intent, settings=settings)
 
 
 @router.get("/missions/{mission_id}/payment", response_model=PaymentIntentOut)
@@ -207,7 +223,7 @@ async def get_payment(
     intent = await payment_intent_for_mission(session, mission_id)
     if intent is None:
         raise HTTPException(status_code=404, detail="no payment intent for this mission")
-    return _payment_out(intent)
+    return _payment_out(intent, settings=get_settings())
 
 
 @router.post("/webhooks/{provider_name}", response_model=WebhookAck)
@@ -231,6 +247,7 @@ async def receive_webhook(
     try:
         provider = provider_for(provider_name, app_env=settings.app_env)
         header_name = signature_header_for(provider_name)
+        event_id_header = event_id_header_for(provider_name)
     except UnknownProvider as unknown:
         raise HTTPException(
             status_code=404, detail={"reason_code": unknown.reason_code}
@@ -247,11 +264,31 @@ async def receive_webhook(
         raise HTTPException(status_code=413, detail={"reason_code": "WEBHOOK_BODY_TOO_LARGE"})
 
     signature = request.headers.get(header_name, "")
+    provider_event_id = request.headers.get(event_id_header, "") if event_id_header else None
 
     try:
-        outcome = await handle_webhook(session, provider=provider, body=body, signature=signature)
+        outcome = await handle_webhook(
+            session,
+            provider=provider,
+            body=body,
+            signature=signature,
+            provider_event_id=provider_event_id,
+        )
     except WebhookRejected as rejected:
-        status = 404 if rejected.reason_code == "WEBHOOK_UNKNOWN_PAYMENT" else 401
+        # Safe transport audit only: never log the body, signature, event id,
+        # provider credentials, or an unverified payment identifier.
+        LOGGER.warning(
+            "webhook rejected provider=%s reason_code=%s",
+            provider_name,
+            rejected.reason_code,
+        )
+        status = (
+            404
+            if rejected.reason_code == "WEBHOOK_UNKNOWN_PAYMENT"
+            else 401
+            if rejected.reason_code == "WEBHOOK_SIGNATURE_INVALID"
+            else 400
+        )
         raise HTTPException(
             status_code=status,
             detail={"reason_code": rejected.reason_code},

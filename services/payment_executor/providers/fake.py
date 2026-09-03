@@ -216,7 +216,13 @@ class FakePaymentProvider:
         """
         return hmac.new(self._webhook_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
-    def verify_webhook(self, *, body: bytes, signature: str) -> VerifiedWebhookEvent:
+    def verify_webhook(
+        self,
+        *,
+        body: bytes,
+        signature: str,
+        provider_event_id: str | None = None,
+    ) -> VerifiedWebhookEvent:
         expected = self.sign(body)
         # Constant-time: a byte-by-byte compare leaks the correct prefix through
         # timing and lets an attacker construct a valid signature incrementally.
@@ -235,7 +241,7 @@ class FakePaymentProvider:
         try:
             return VerifiedWebhookEvent(
                 provider=self.name,
-                provider_event_id=str(parsed["event_id"]),
+                provider_event_id=provider_event_id or str(parsed["event_id"]),
                 event_type=WebhookEventType(parsed["event_type"]),
                 provider_payment_id=str(parsed["provider_payment_id"]),
                 sequence=parsed.get("sequence"),

@@ -70,7 +70,7 @@ class ProviderTerminalError(ProviderError):
     reason_code = "PROVIDER_TERMINAL_FAILURE"
 
 
-class ProviderPaymentMismatch(ProviderError):
+class ProviderPaymentMismatch(ProviderError, ValueError):
     """A provider response does not describe the intent PACTRA requested.
 
     A successful HTTP response is still untrusted input.  A mismatched amount,
@@ -119,7 +119,13 @@ class PaymentProvider(Protocol):
         """
         ...
 
-    def verify_webhook(self, *, body: bytes, signature: str) -> VerifiedWebhookEvent:
+    def verify_webhook(
+        self,
+        *,
+        body: bytes,
+        signature: str,
+        provider_event_id: str | None = None,
+    ) -> VerifiedWebhookEvent:
         """Verify a raw webhook body and parse it.
 
         MUST recompute the MAC over the RAW body with a constant-time compare,
@@ -127,5 +133,9 @@ class PaymentProvider(Protocol):
         state. Returning a ``VerifiedWebhookEvent`` is the adapter asserting the
         signature checked out; the handler accepts no other input type, so an
         unverified payload has no path into state.
+
+        ``provider_event_id`` carries a provider's transport-level delivery id
+        when it is not embedded in the signed body. Razorpay supplies its
+        unique deduplication key in ``X-Razorpay-Event-Id``.
         """
         ...

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,8 +15,20 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://pactra:pactra@localhost:5432/pactra"
     redis_url: str = "redis://localhost:6379/0"
 
-    # Payments are enforced to test mode. No real credentials in source.
+    # Payments are enforced to test mode. No real credentials in source. The
+    # two secrets use SecretStr so settings repr/debug output cannot disclose
+    # them accidentally. Empty defaults fail closed in the provider factory.
     razorpay_key_id: str = "rzp_test_REPLACE_ME"
+    razorpay_key_secret: SecretStr = SecretStr("")
+    razorpay_webhook_secret: SecretStr = SecretStr("")
+    # Operator acknowledgement only: this does not configure Razorpay. The
+    # matching merchant-dashboard setting must already have been enabled.
+    razorpay_duplicate_receipt_rejection_enabled: bool = False
+    razorpay_connect_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    razorpay_read_timeout_seconds: float = Field(default=7.0, gt=0, le=60)
+    razorpay_write_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    razorpay_pool_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    razorpay_overall_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     payment_test_mode: bool = True
 
     # How long a freshly issued authorization stays usable (Phase 3). Short by
