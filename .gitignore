@@ -26,6 +26,12 @@ dist/
 
 # Local data
 data/
+
+# Frontend source-of-truth reference snapshots are generated from backend
+# declarations and must be present in a fresh clone.
+!apps/web/src/data/
+!apps/web/src/data/*.generated.json
+
 *.db
 
 # Generated evaluation artifacts (Phase 6). A benchmark report committed by
