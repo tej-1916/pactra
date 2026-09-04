@@ -6,8 +6,8 @@ that make the problem hard:
 
 1. **Provider-side idempotency.** A repeated ``create_payment`` with the same
    idempotency key returns the SAME payment, flagged ``idempotent_replay``. Real
-   rails behave this way, and a fake that created a second payment would let a
-   broken executor look correct.
+   rails with verified idempotent-create contracts behave this way. The fake's
+   declaration preserves the retry behavior tested for that contract.
 2. **Side effects that outlive the response.** ``TIMEOUT_AFTER_CREATE`` records
    the payment *and then* raises. The caller sees only a timeout, while the
    provider state now contains a payment. This is the exact shape of the lost
@@ -79,6 +79,7 @@ class FakePaymentProvider:
     """
 
     name = PROVIDER_NAME
+    create_retries_are_idempotent = True
 
     def __init__(
         self,

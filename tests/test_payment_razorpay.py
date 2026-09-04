@@ -92,7 +92,6 @@ def make_provider(**kwargs: Any) -> RazorpayTestPaymentProvider:
         key_id=kwargs.pop("key_id", KEY_ID),
         key_secret=kwargs.pop("key_secret", KEY_SECRET),
         webhook_secret=kwargs.pop("webhook_secret", WEBHOOK_SECRET),
-        duplicate_receipt_rejection_enabled=kwargs.pop("duplicate_receipt_rejection_enabled", True),
         **kwargs,
     )
 
@@ -145,6 +144,60 @@ def captured_payment(
     if captured is not None:
         entity["captured"] = captured
     return entity
+
+
+class DuplicatePermittingRazorpay:
+    """Razorpay-shaped remote that never rejects a duplicate receipt."""
+
+    def __init__(self, *, hide_receipt_search_after_create: bool = False) -> None:
+        self.orders: list[dict[str, Any]] = []
+        self.post_calls = 0
+        self.get_calls: list[tuple[str, dict[str, Any]]] = []
+        self.hide_receipt_search_after_create = hide_receipt_search_after_create
+        self.lose_next_create_response = False
+        self.fail_next_search: Exception | None = None
+
+    async def post(self, url: str, **kwargs: Any) -> StubResponse:
+        assert url.endswith("/orders")
+        self.post_calls += 1
+        payload = kwargs["json"]
+        created = order_entity(
+            order_id=f"order_DUPLICATE_OK_{self.post_calls}",
+            receipt=payload["receipt"],
+            amount=payload["amount"],
+            currency=payload["currency"],
+        )
+        self.orders.append(created)
+        if self.lose_next_create_response:
+            self.lose_next_create_response = False
+            raise httpx.ReadTimeout("response lost after Razorpay accepted the Order")
+        return StubResponse(200, created)
+
+    async def get(self, url: str, **kwargs: Any) -> StubResponse:
+        self.get_calls.append((url, kwargs))
+        if url.endswith("/payments"):
+            return StubResponse(200, {"entity": "collection", "count": 0, "items": []})
+        if "/orders/order_" in url:
+            order_id = url.rsplit("/", 1)[-1]
+            match = next((order for order in self.orders if order["id"] == order_id), None)
+            return StubResponse(404 if match is None else 200, match)
+
+        if self.fail_next_search is not None:
+            failure, self.fail_next_search = self.fail_next_search, None
+            raise failure
+
+        params = kwargs["params"]
+        receipt = params["receipt"]
+        matching = [order for order in self.orders if order["receipt"] == receipt]
+        if self.hide_receipt_search_after_create and self.orders:
+            matching = []
+        count = params.get("count", 10)
+        skip = params.get("skip", 0)
+        page = matching[skip : skip + count]
+        return StubResponse(
+            200,
+            {"entity": "collection", "count": len(page), "items": page},
+        )
 
 
 def webhook_body(
@@ -203,68 +256,32 @@ def test_from_environment_requires_credentials(monkeypatch: pytest.MonkeyPatch):
         from_environment()
 
 
-@pytest.mark.parametrize("acknowledgement", [None, "false"])
-def test_from_environment_requires_duplicate_receipt_rejection_acknowledgement(
-    monkeypatch: pytest.MonkeyPatch,
-    acknowledgement: str | None,
-):
-    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
-    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
-    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
-    if acknowledgement is None:
-        monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
-    else:
-        monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", acknowledgement)
-
-    with pytest.raises(InvariantViolation) as exc:
-        from_environment()
-
-    assert exc.value.invariant == "razorpay.duplicate_receipt_rejection_acknowledged"
-    rendered = str(exc.value)
-    assert KEY_SECRET not in rendered
-    assert WEBHOOK_SECRET not in rendered
-
-
-def test_true_duplicate_receipt_rejection_acknowledgement_allows_provider(
+def test_from_environment_does_not_depend_on_duplicate_receipt_rejection_setting(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
-    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
+    monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
 
     assert from_environment().name == "razorpay_test"
 
 
-@pytest.mark.parametrize("acknowledgement", [None, "false"])
-def test_production_registry_refuses_razorpay_without_acknowledgement(
-    monkeypatch: pytest.MonkeyPatch,
-    acknowledgement: str | None,
-):
-    from services.payment_executor.registry import ProviderUnavailable, provider_for
-
-    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
-    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
-    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
-    if acknowledgement is None:
-        monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
-    else:
-        monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", acknowledgement)
-
-    with pytest.raises(ProviderUnavailable) as exc:
-        provider_for("razorpay_test", app_env="production")
-
-    assert "razorpay.duplicate_receipt_rejection_acknowledged" in exc.value.detail
-    assert KEY_SECRET not in str(exc.value)
-    assert WEBHOOK_SECRET not in str(exc.value)
-
-
-def test_fake_provider_does_not_require_razorpay_deployment_acknowledgement(
+def test_production_registry_allows_configured_test_provider_without_dashboard_claim(
     monkeypatch: pytest.MonkeyPatch,
 ):
     from services.payment_executor.registry import provider_for
 
+    monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
     monkeypatch.delenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", raising=False)
+
+    assert provider_for("razorpay_test", app_env="production").name == "razorpay_test"
+
+
+def test_fake_provider_configuration_remains_independent_of_razorpay():
+    from services.payment_executor.registry import provider_for
 
     assert provider_for("fake", app_env="development").name == "fake"
 
@@ -273,7 +290,6 @@ def test_repr_and_settings_never_render_secrets(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
-    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
     provider = from_environment(http_client=StubClient())
     rendered = repr(provider)
     from apps.api.pactra.config import Settings
@@ -392,7 +408,9 @@ async def test_empty_receipt_lookup_is_positive_not_found_evidence():
         is None
     )
     assert client.get_calls[0][1]["params"] == {
-        "receipt": receipt_for_idempotency_key(REQUEST.idempotency_key)
+        "receipt": receipt_for_idempotency_key(REQUEST.idempotency_key),
+        "count": 100,
+        "skip": 0,
     }
 
 
@@ -447,6 +465,70 @@ async def test_duplicate_exact_receipt_results_are_refused_not_arbitrated():
         )
 
 
+async def test_receipt_lookup_exhausts_pages_before_adopting_one_exact_order():
+    receipt = receipt_for_idempotency_key(REQUEST.idempotency_key)
+    first_page = [
+        order_entity(order_id="order_EXACT", receipt=receipt),
+        *[
+            order_entity(order_id=f"order_OTHER_{index}", receipt=f"other-{index}")
+            for index in range(99)
+        ],
+    ]
+
+    def get(_url: str, kwargs: dict[str, Any]) -> StubResponse:
+        skip = kwargs["params"].get("skip", 0)
+        return StubResponse(
+            200,
+            {
+                "entity": "collection",
+                "count": len(first_page) if skip == 0 else 0,
+                "items": first_page if skip == 0 else [],
+            },
+        )
+
+    client = StubClient(get=get)
+    recovered = await make_provider(http_client=client).get_payment(
+        idempotency_key=REQUEST.idempotency_key
+    )
+
+    assert recovered is not None
+    assert recovered.provider_payment_id == "order_EXACT"
+    assert [call[1]["params"] for call in client.get_calls] == [
+        {"receipt": receipt, "count": 100, "skip": 0},
+        {"receipt": receipt, "count": 100, "skip": 100},
+    ]
+
+
+async def test_receipt_lookup_detects_duplicate_exact_orders_across_pages():
+    receipt = receipt_for_idempotency_key(REQUEST.idempotency_key)
+    first_page = [
+        order_entity(order_id="order_FIRST", receipt=receipt),
+        *[
+            order_entity(order_id=f"order_OTHER_{index}", receipt=f"other-{index}")
+            for index in range(99)
+        ],
+    ]
+    second_page = [
+        order_entity(order_id="order_SECOND", receipt=receipt),
+        *[
+            order_entity(order_id=f"order_LATER_{index}", receipt=f"later-{index}")
+            for index in range(99)
+        ],
+    ]
+
+    def get(_url: str, kwargs: dict[str, Any]) -> StubResponse:
+        skip = kwargs["params"].get("skip", 0)
+        items = first_page if skip == 0 else second_page if skip == 100 else []
+        return StubResponse(200, {"entity": "collection", "count": len(items), "items": items})
+
+    client = StubClient(get=get)
+    with pytest.raises(ProviderTransientError) as caught:
+        await make_provider(http_client=client).get_payment(idempotency_key=REQUEST.idempotency_key)
+
+    assert caught.value.reason_code == "PROVIDER_AMBIGUITY"
+    assert [call[1]["params"]["skip"] for call in client.get_calls] == [0, 100, 200]
+
+
 async def test_lookup_404_is_not_found_but_5xx_and_transport_are_not_absence():
     provider = make_provider(http_client=StubClient(get=StubResponse(404)))
     assert await provider.get_payment(provider_payment_id="order_gone") is None
@@ -465,6 +547,449 @@ async def test_lookup_404_is_not_found_but_5xx_and_transport_are_not_absence():
         await make_provider(http_client=StubClient(get=ConnectionResetError("reset"))).get_payment(
             idempotency_key=REQUEST.idempotency_key
         )
+
+
+async def _committed_razorpay_intent(sessionmaker, *, key: str):
+    from packages.schemas.capability import payment_executor_capabilities
+    from services.payment_executor.intents import create_payment_intent
+    from tests.conftest import authorized_mission
+
+    async with sessionmaker() as setup:
+        mission, authorization, _ = await authorized_mission(setup)
+        created = await create_payment_intent(
+            setup,
+            capabilities=payment_executor_capabilities(),
+            mission_id=mission.id,
+            authorization_id=authorization.authorization_id,
+            idempotency_key=key,
+            provider="razorpay_test",
+        )
+        await setup.commit()
+        return mission.id, created.intent.id
+
+
+async def test_existing_order_is_adopted_after_consuming_create_fence(sessionmaker):
+    from apps.api.db.models import PaymentIntentRow
+    from services.payment_executor.worker import run_once
+
+    key = "razorpay-adopt-before-create"
+    remote = DuplicatePermittingRazorpay()
+    remote.orders.append(
+        order_entity(
+            order_id="order_ALREADY_THERE",
+            receipt=receipt_for_idempotency_key(key),
+        )
+    )
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+
+    await run_once(sessionmaker, provider=provider)
+
+    async with sessionmaker() as check:
+        intent = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        assert intent.provider_payment_id == "order_ALREADY_THERE"
+        assert intent.provider_create_fenced_at is not None
+    assert remote.post_calls == 0
+
+
+async def test_multiple_existing_orders_persist_fence_and_ambiguity(sessionmaker):
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor.worker import run_once
+
+    key = "razorpay-ambiguous-existing-orders"
+    receipt = receipt_for_idempotency_key(key)
+    remote = DuplicatePermittingRazorpay()
+    remote.orders.extend(
+        [
+            order_entity(order_id="order_AMBIGUOUS_1", receipt=receipt),
+            order_entity(order_id="order_AMBIGUOUS_2", receipt=receipt),
+        ]
+    )
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+
+    await run_once(sessionmaker, provider=provider)
+
+    async with sessionmaker() as check:
+        intent = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        assert intent.state == PaymentIntentState.PROVIDER_PENDING.value
+        assert intent.provider_payment_id is None
+        assert intent.provider_create_fenced_at is not None
+        assert intent.provider_ambiguity_observed_at is not None
+        assert intent.last_reason_code == "PROVIDER_AMBIGUITY"
+    assert remote.post_calls == 0
+
+
+async def test_crash_before_fence_commit_leaves_permission_unconsumed(
+    sessionmaker, monkeypatch: pytest.MonkeyPatch
+):
+    from datetime import timedelta
+
+    from apps.api.db.models import OutboxEventRow, PaymentIntentRow
+    from packages.schemas.domain import utcnow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor.outbox import claim_next_event
+    from services.payment_executor.worker import process_claimed_event, run_once
+
+    key = "razorpay-crash-before-fence-commit"
+    remote = DuplicatePermittingRazorpay()
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+    start = utcnow()
+
+    async with sessionmaker() as claim:
+        event = await claim_next_event(claim, worker_id="doomed-before-fence", now=start)
+        assert event is not None
+        event_id = event.id
+        await claim.commit()
+
+    async with sessionmaker() as work:
+        event = await work.get(OutboxEventRow, event_id, populate_existing=True)
+        assert event is not None
+
+        async def crash_instead_of_fence_commit() -> None:
+            raise RuntimeError("process died before fence commit")
+
+        monkeypatch.setattr(work, "commit", crash_instead_of_fence_commit)
+        with pytest.raises(RuntimeError, match="before fence commit"):
+            await process_claimed_event(work, provider=provider, event=event, now=start)
+        await work.rollback()
+
+    async with sessionmaker() as check:
+        crashed = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert crashed is not None
+        assert crashed.state == PaymentIntentState.QUEUED.value
+        assert crashed.provider_create_fenced_at is None
+    assert remote.get_calls == []
+    assert remote.post_calls == 0
+
+    await run_once(
+        sessionmaker,
+        provider=provider,
+        now=start + timedelta(seconds=45),
+    )
+
+    async with sessionmaker() as check:
+        recovered = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert recovered is not None
+        assert recovered.state == PaymentIntentState.PROVIDER_PENDING.value
+        assert recovered.provider_create_fenced_at is not None
+    assert remote.post_calls == 1
+
+
+async def test_crash_after_existing_search_then_empty_recovery_never_posts(
+    sessionmaker, monkeypatch: pytest.MonkeyPatch
+):
+    from datetime import timedelta
+
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.domain import utcnow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor import executor
+    from services.payment_executor.worker import run_once
+
+    key = "razorpay-existing-search-adoption-crash"
+    remote = DuplicatePermittingRazorpay()
+    remote.orders.append(
+        order_entity(
+            order_id="order_VISIBLE_ONCE",
+            receipt=receipt_for_idempotency_key(key),
+        )
+    )
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+    start = utcnow()
+    finish_existing = executor._finish_existing_before_create
+
+    async def crash_before_adoption_commit(*args: Any, **kwargs: Any):
+        raise RuntimeError("process died after search before adoption")
+
+    monkeypatch.setattr(executor, "_finish_existing_before_create", crash_before_adoption_commit)
+    with pytest.raises(RuntimeError, match="before adoption"):
+        await run_once(sessionmaker, provider=provider, now=start)
+
+    async with sessionmaker() as check:
+        crashed = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert crashed is not None
+        assert crashed.state == PaymentIntentState.QUEUED.value
+        assert crashed.provider_create_fenced_at is not None
+        assert crashed.provider_payment_id is None
+    assert remote.post_calls == 0
+
+    monkeypatch.setattr(executor, "_finish_existing_before_create", finish_existing)
+    remote.orders.clear()  # model a later non-monotonic empty receipt search
+    await run_once(sessionmaker, provider=provider, now=start + timedelta(seconds=2))
+
+    async with sessionmaker() as check:
+        recovered = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert recovered is not None
+        assert recovered.state == PaymentIntentState.PROVIDER_PENDING.value
+        assert recovered.provider_create_fenced_at is not None
+        assert recovered.provider_payment_id is None
+    assert remote.post_calls == 0
+
+
+async def test_observed_ambiguity_is_monotonic_across_zero_and_one_match_restarts(sessionmaker):
+    from datetime import timedelta
+
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.domain import utcnow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor.worker import run_once
+
+    key = "razorpay-monotonic-provider-ambiguity"
+    receipt = receipt_for_idempotency_key(key)
+    remote = DuplicatePermittingRazorpay()
+    remote.orders.extend(
+        [
+            order_entity(order_id="order_AMBIGUOUS_FIRST", receipt=receipt),
+            order_entity(order_id="order_AMBIGUOUS_SECOND", receipt=receipt),
+        ]
+    )
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+    start = utcnow()
+
+    await run_once(sessionmaker, provider=provider, now=start)
+    async with sessionmaker() as check:
+        observed = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert observed is not None
+        ambiguity_observed_at = observed.provider_ambiguity_observed_at
+        assert observed.provider_create_fenced_at is not None
+        assert ambiguity_observed_at is not None
+        assert observed.last_reason_code == "PROVIDER_AMBIGUITY"
+
+    remote.orders.clear()
+    await run_once(sessionmaker, provider=provider, now=start + timedelta(seconds=2))
+    remote.orders.append(order_entity(order_id="order_LATER_SINGLE", receipt=receipt))
+    await run_once(sessionmaker, provider=provider, now=start + timedelta(seconds=5))
+
+    async with sessionmaker() as check:
+        recovered = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert recovered is not None
+        assert recovered.state == PaymentIntentState.PROVIDER_PENDING.value
+        assert recovered.provider_payment_id is None
+        assert recovered.provider_ambiguity_observed_at == ambiguity_observed_at
+        assert recovered.last_reason_code == "PROVIDER_AMBIGUITY"
+    assert remote.post_calls == 0
+
+
+async def test_timeout_with_invisible_created_order_never_issues_second_create(sessionmaker):
+    """Receipt duplicates are allowed and lookup may lag, but PACTRA posts once."""
+    from datetime import timedelta
+
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.domain import utcnow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor.worker import run_once
+
+    key = "razorpay-duplicate-permitted-timeout"
+    remote = DuplicatePermittingRazorpay(hide_receipt_search_after_create=True)
+    remote.lose_next_create_response = True
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+    start = utcnow()
+
+    await run_once(sessionmaker, provider=provider, now=start)
+    for seconds in (2, 5, 15, 45, 120):
+        await run_once(
+            sessionmaker,
+            provider=provider,
+            now=start + timedelta(seconds=seconds),
+        )
+
+    async with sessionmaker() as check:
+        intent = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        assert intent.state == PaymentIntentState.PROVIDER_PENDING.value
+        assert intent.provider_create_fenced_at is not None
+        assert intent.provider_payment_id is None
+    assert remote.post_calls == 1
+    assert len(remote.orders) == 1
+
+
+async def test_crash_after_fence_before_receipt_search_restarts_search_only_without_post(
+    sessionmaker,
+):
+    """Exact crash point: fence committed, process died before calling create."""
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.domain import utcnow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor.worker import run_once
+
+    key = "razorpay-crash-after-fence-before-post"
+    remote = DuplicatePermittingRazorpay()
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+
+    async with sessionmaker() as setup:
+        intent = await setup.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        assert intent.state == PaymentIntentState.QUEUED.value
+        intent.provider_create_fenced_at = utcnow()
+        await setup.commit()
+
+    # A restarted worker must treat QUEUED + fence as uncertainty, not as an
+    # illegal transition and never as permission for a replacement Order.
+    await run_once(sessionmaker, provider=provider)
+
+    async with sessionmaker() as check:
+        intent = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        assert intent.state == PaymentIntentState.PROVIDER_PENDING.value
+        assert intent.provider_create_fenced_at is not None
+    assert remote.get_calls
+    assert remote.post_calls == 0
+
+
+async def test_crash_after_empty_search_before_post_never_allows_replacement_create(
+    sessionmaker, monkeypatch: pytest.MonkeyPatch
+):
+    from datetime import timedelta
+
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.domain import utcnow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor import executor
+    from services.payment_executor.worker import run_once
+
+    key = "razorpay-crash-after-search-before-post"
+    remote = DuplicatePermittingRazorpay()
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+    start = utcnow()
+    original_verify = executor.verify_intent_authorization_before_provider_io
+    verification_count = 0
+
+    async def crash_before_post(*args: Any, **kwargs: Any) -> None:
+        nonlocal verification_count
+        verification_count += 1
+        if verification_count == 3:
+            raise RuntimeError("process died after empty search before POST")
+        await original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        executor,
+        "verify_intent_authorization_before_provider_io",
+        crash_before_post,
+    )
+    with pytest.raises(RuntimeError, match="before POST"):
+        await run_once(sessionmaker, provider=provider, now=start)
+
+    async with sessionmaker() as check:
+        crashed = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert crashed is not None
+        assert crashed.state == PaymentIntentState.QUEUED.value
+        assert crashed.provider_create_fenced_at is not None
+        assert crashed.provider_payment_id is None
+    assert remote.post_calls == 0
+
+    monkeypatch.setattr(
+        executor,
+        "verify_intent_authorization_before_provider_io",
+        original_verify,
+    )
+    await run_once(sessionmaker, provider=provider, now=start + timedelta(seconds=2))
+
+    async with sessionmaker() as check:
+        recovered = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert recovered is not None
+        assert recovered.state == PaymentIntentState.PROVIDER_PENDING.value
+        assert recovered.provider_create_fenced_at is not None
+        assert recovered.provider_payment_id is None
+    assert remote.post_calls == 0
+
+
+async def test_remote_create_then_lost_local_commit_recovers_without_second_post(sessionmaker):
+    from datetime import timedelta
+
+    from apps.api.db.models import OutboxEventRow, PaymentIntentRow
+    from packages.schemas.domain import utcnow
+    from packages.schemas.payment import PaymentIntentState
+    from services.payment_executor.outbox import claim_next_event
+    from services.payment_executor.worker import process_claimed_event, run_once
+
+    key = "razorpay-remote-create-local-commit-lost"
+    remote = DuplicatePermittingRazorpay()
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+    start = utcnow()
+
+    async with sessionmaker() as claim:
+        event = await claim_next_event(claim, worker_id="doomed", now=start)
+        assert event is not None
+        event_id = event.id
+        await claim.commit()
+
+    async with sessionmaker() as crashing:
+        event = await crashing.get(OutboxEventRow, event_id, populate_existing=True)
+        assert event is not None
+        await process_claimed_event(
+            crashing,
+            provider=provider,
+            event=event,
+            now=start,
+        )
+        assert remote.post_calls == 1
+        await crashing.rollback()
+
+    async with sessionmaker() as check:
+        rolled_back = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert rolled_back is not None
+        assert rolled_back.state == PaymentIntentState.QUEUED.value
+        assert rolled_back.provider_create_fenced_at is not None
+        assert rolled_back.provider_payment_id is None
+
+    await run_once(
+        sessionmaker,
+        provider=provider,
+        worker_id="recovering",
+        now=start + timedelta(seconds=45),
+    )
+
+    async with sessionmaker() as check:
+        recovered = await check.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert recovered is not None
+        assert recovered.provider_payment_id == "order_DUPLICATE_OK_1"
+        assert recovered.provider_create_fenced_at is not None
+    assert remote.post_calls == 1
+    assert len(remote.orders) == 1
+
+
+async def test_duplicate_create_event_redelivery_from_fenced_state_cannot_create_orders(
+    sessionmaker,
+):
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.domain import utcnow
+    from packages.schemas.payment import OutboxEventType
+    from services.payment_executor.outbox import enqueue_outbox_event
+    from services.payment_executor.worker import run_once
+
+    key = "razorpay-concurrent-fenced-redelivery"
+    remote = DuplicatePermittingRazorpay()
+    provider = make_provider(http_client=remote)
+    _, intent_id = await _committed_razorpay_intent(sessionmaker, key=key)
+
+    async with sessionmaker() as setup:
+        intent = await setup.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        intent.provider_create_fenced_at = utcnow()
+        await enqueue_outbox_event(
+            setup,
+            payment_intent_id=intent_id,
+            event_type=OutboxEventType.PAYMENT_CREATE_REQUESTED,
+            payload={"idempotency_key": key},
+        )
+        await setup.commit()
+
+    await run_once(sessionmaker, provider=provider, worker_id="worker-a")
+    await run_once(sessionmaker, provider=provider, worker_id="worker-b")
+
+    assert remote.post_calls == 0
+    assert len(remote.orders) == 0
 
 
 async def test_lost_create_response_recovers_same_remote_order_and_logical_intent(sessionmaker):
@@ -716,7 +1241,6 @@ async def test_api_route_uses_razorpay_event_id_header_and_never_returns_secrets
     monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
-    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
     get_settings.cache_clear()
     body = webhook_body()
     response = await client.post(
@@ -756,7 +1280,6 @@ async def test_api_route_rejects_non_ascii_signature_without_state_or_authority_
     monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
-    monkeypatch.setenv("RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED", "true")
     get_settings.cache_clear()
 
     async with sessionmaker() as check:

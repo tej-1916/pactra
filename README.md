@@ -437,27 +437,33 @@ it as failure re-creates a payment that already exists; treating it as success
 records money that never moved. So it becomes uncertainty, and only
 reconciliation resolves it.
 
-`FAILED_RETRYABLE` is reachable from `PROVIDER_PENDING` through exactly one
-route: a provider that positively reports holding **no** payment for the key.
-No timer, no elapsed time, and no attempt count promotes an uncertain payment
-back to retryable, because none of those is evidence about whether money moved.
+`FAILED_RETRYABLE` is reachable from `PROVIDER_PENDING` only for a provider with
+a genuine idempotent-create contract. For Razorpay, the durable create fence is
+permanent: no timer, empty lookup, or attempt count restores create permission.
 
 ### Never a blind retry
 
-Before **every** create attempt the executor asks the provider what it holds for
-the durable idempotency key:
+For a non-idempotent-create provider, the executor first consumes the one-way
+create fence and commits it. Only that compare-and-set winner may continue:
 
 ```text
+verify proof + binding              → acquire fence, COMMIT
+post-fence exact receipt search:
 lookup succeeds, payment found     → validate, adopt it, DO NOT create
-lookup succeeds, nothing found     → safe to create; no duplicate is possible
+lookup succeeds, nothing found     → fence winner re-verifies, then may make
+                                     the sole Razorpay create call
 lookup FAILS                       → stay uncertain, reconcile later,
                                      NEVER fall through to create
 ```
 
-This deliberately does not rely on the provider deduplicating creates.
-`NonIdempotentFakePaymentProvider` — a provider that creates a brand-new payment
-on every create call — is used in the crash-recovery tests precisely so
-provider-side idempotency cannot hide a PACTRA blind-retry bug.
+`provider_create_fenced_at` means only that PACTRA permanently consumed initial
+create permission. It is committed while the intent remains `QUEUED`, before
+the Razorpay POST, and does not claim the POST was dispatched. Recovery from
+`QUEUED + fence` searches and reconciles only. Zero matches remain uncertain,
+one is adopted, and multiple matches fail closed as provider ambiguity.
+`provider_ambiguity_observed_at` makes that last conclusion monotonic: later
+empty or single-match results cannot erase known multiple-Order ambiguity or
+claim success automatically.
 
 ### A provider response may report state, never redefine the transaction
 
@@ -510,11 +516,13 @@ decision to pay. Claiming is dialect-appropriate rather than pretended-portable:
 `SELECT … FOR UPDATE SKIP LOCKED` on PostgreSQL, an atomic conditional UPDATE
 decided by `rowcount` elsewhere. Neither uses a read-then-write in Python.
 
-The worker uses **two transactions**, and the split is the crash-recovery story:
+The worker claim and fenced Razorpay dispatch use explicit durable boundaries:
 
 ```text
-TX 1   claim the event, persist IN_PROGRESS + the attempt   COMMIT
-TX 2   do the provider work, persist result, acknowledge    COMMIT
+TX 1   claim event, persist IN_PROGRESS + lease attempt      COMMIT
+TX 2   verify; acquire provider_create_fenced_at while QUEUED COMMIT
+TX 3   re-verify; exhaustive receipt search; for zero matches,
+       re-verify and invoke the sole create; persist result   COMMIT
 ```
 
 A crash during provider I/O therefore leaves a durable `IN_PROGRESS` lease
@@ -581,24 +589,18 @@ What is genuinely implemented and tested offline: the test-mode guard and
 webhook signature verification (`X-Razorpay-Signature` = hex HMAC-SHA256 of the
 raw body, per Razorpay's documentation). Three limitations, stated as gaps:
 
-1. **Remote-Order idempotency has a mandatory provider precondition.** PACTRA
-   guarantees that the same idempotency key creates at most one logical PACTRA
-   `PaymentIntent`. It sends a deterministic, bounded digest as the Razorpay
-   Order `receipt` and reconciles via `GET /v1/orders?receipt=…`, but Razorpay
-   receipt search may return empty even when an Order exists. Therefore the
-   at-most-one Razorpay Order claim is conditional on enabling **reject orders
-   with duplicate receipts** in the Razorpay merchant dashboard. Provider
-   construction fails closed unless
-   `RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED=true` acknowledges that manual
-   configuration. The flag does not configure or verify Razorpay. If a receipt
-   search returns more than one order, the adapter **refuses** rather than
-   adopting one arbitrarily.
+1. **Razorpay receipt uniqueness is not assumed.** Real Razorpay TEST API
+   evidence accepted duplicate receipts. PACTRA sends a deterministic bounded
+   receipt, exhausts the paginated exact-match search, and commits a permanent
+   one-way create fence before its sole possible POST. After the fence, an empty
+   result stays uncertain, one Order is adopted, and multiple Orders are refused
+   as ambiguity. A crash after the fence but before POST can require operator
+   recovery; automatic code never clears the fence or issues a replacement.
 2. **An Order is not a Payment.** The server-side API creates an Order; the
    Payment appears when a customer completes Checkout. A complete end-to-end
    Razorpay payment needs a Checkout front end, which Phase 4 does not build.
-3. **The HTTP paths have not been exercised against the live Razorpay API.**
-   They are tested against a stub client, which proves this adapter's
-   *interpretation* of a response — not that Razorpay replies that way.
+3. **Only Razorpay TEST mode is supported.** Live keys remain structurally
+   refused and no production-mode payment claim is made.
 
 Provider-independent reliability, proven against `FakePaymentProvider`, is the
 deliverable. Razorpay is an adapter over it.

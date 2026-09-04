@@ -8,9 +8,10 @@ a durable intent, and this worker — never around them.
 
 Claiming and handling use separate transactions. The claim is committed before
 the provider call, so a crash leaves a durable IN_PROGRESS lease rather than
-rolling the claim back to an indistinguishable PENDING event. The handler then
-commits its local state and acknowledgement together. Because every handler is
-idempotent, re-handling after lease expiry is safe.
+rolling the claim back to an indistinguishable PENDING event. For a provider
+without idempotent create, handling commits a one-way fence before receipt
+search or the only allowed create. Re-handling after lease expiry searches and
+reconciles but cannot consume create permission twice.
 """
 
 from __future__ import annotations
@@ -100,11 +101,12 @@ async def run_once(
     now: datetime | None = None,
     lease: timedelta = DEFAULT_LEASE,
 ) -> WorkerOutcome:
-    """Claim and process at most one event, using two transactions.
+    """Claim and process at most one event across durable boundaries.
 
     An unexpected handler exception rolls back only handler state; the durable
-    claim and its attempt increment remain. A recovery transaction returns the
-    event to the queue with backoff.
+    claim and its attempt increment remain. Non-idempotent create dispatch may
+    also commit its one-way fence inside the handler transaction. A recovery
+    transaction returns the event to the queue with backoff.
     """
     moment = as_utc(now or utcnow())
 

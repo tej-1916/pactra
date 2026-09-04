@@ -349,6 +349,8 @@ class NonIdempotentProvider(FakePaymentProvider):
     a second create is immediately visible as a second payment.
     """
 
+    create_retries_are_idempotent = False
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._sequence = 0

@@ -2,9 +2,7 @@
 
 PACTRA uses Razorpay **test mode only**. A key whose id does not begin with
 `rzp_test_` is refused before a provider object can be constructed. Placeholder
-or missing key, API secret, and webhook secret values also fail closed. Provider
-construction additionally fails closed unless the operator acknowledges that
-Razorpay's **reject orders with duplicate receipts** merchant setting is enabled.
+or missing key, API secret, and webhook secret values also fail closed.
 
 ## Honest execution boundary
 
@@ -33,7 +31,7 @@ not equate Checkout interaction with PACTRA authorization.
 | Order `paid` plus exactly one matching captured Payment | `SUCCEEDED` |
 | `payment.captured` or `order.paid` with signed, internally consistent captured-payment evidence | `SUCCEEDED` |
 | definitive create 4xx | `FAILED_TERMINAL` |
-| create 429 | `FAILED_RETRYABLE` |
+| create 429 after the fence is durable | `PROVIDER_PENDING`; search/reconcile only |
 | create transport timeout, malformed 2xx, duplicate-receipt ambiguity, or 5xx | `PROVIDER_PENDING` and reconciliation |
 
 PACTRA never derives success from local Order creation. A successful state
@@ -51,22 +49,41 @@ not-found. Once any provider Order id has been durably linked, even a later
 not-found response cannot license a replacement Order; the intent remains
 uncertain until reconciliation succeeds or is dead-lettered for review.
 
-The guarantees have different boundaries:
+Real Razorpay TEST API evidence accepted two consecutive Order creates with the
+same amount, currency, receipt, and notes. PACTRA therefore does not claim that
+Razorpay enforces receipt uniqueness and does not depend on a dashboard setting.
 
-- **Guaranteed by PACTRA:** the same idempotency key creates at most one logical
-  PACTRA `PaymentIntent`.
-- **Conditional provider guarantee:** at most one Razorpay Order is created only
-  when Razorpay's merchant setting **reject orders with duplicate receipts** is
-  actually enabled. Razorpay receipt search may return an empty result even when
-  an Order exists, so search alone cannot support the remote-Order claim after a
-  lost create response.
+The guarantee is enforced locally in two layers:
 
-`RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED=true` is only an operator
-acknowledgement that the dashboard setting has already been enabled. It does not
-configure Razorpay and PACTRA cannot independently verify the setting. Without
-the acknowledgement, the Razorpay provider refuses construction; setting the
-flag without configuring the dashboard is a false operational assertion and
-does not establish the conditional guarantee.
+- `UNIQUE(payment_intents.idempotency_key)` permits one logical PACTRA payment;
+- `payment_intents.provider_create_fenced_at` permanently consumes permission
+  to make the initial Razorpay create before the POST can occur.
+
+The fence is deliberately conservative. It proves only that PACTRA consumed
+create permission. It does **not** prove that a POST was dispatched or reached
+Razorpay. The safe dispatch sequence is:
+
+1. re-verify the stored USER_ED25519 proof and full transaction binding;
+2. atomically acquire `provider_create_fenced_at` while the intent remains
+   `QUEUED`, then commit it;
+3. only the fence winner re-verifies and searches every relevant Razorpay
+   Orders page for the exact deterministic receipt;
+4. adopt one exact match, persist/refuse multiple matches, or continue only for zero;
+5. for zero matches, re-verify once more immediately before the sole permitted
+   Razorpay Order create.
+
+After the fence exists, every automatic path is search/reconciliation-only. An
+empty search remains `PROVIDER_PENDING`, never clears the fence, and never
+authorizes another POST. This covers both indistinguishable crash outcomes:
+the worker may have died before POST, or Razorpay may hold an Order that is not
+currently visible in receipt search. The first case may require operator
+recovery; PACTRA does not trade duplicate-payment safety for availability.
+
+`provider_ambiguity_observed_at` separately records the first durable observation
+of multiple exact Orders. It is monotonic: later empty or single-result searches
+and individual webhooks cannot erase it or automatically claim a clean payment.
+Operator review is required because weaker later evidence cannot prove the
+previously observed additional Order is harmless.
 
 ## Exact timeout semantics
 
@@ -85,9 +102,8 @@ The overall bound wraps injected clients too, so a stalled dependency cannot
 hold the current PaymentIntent transaction indefinitely. A create timeout is
 ambiguous: the intent becomes `PROVIDER_PENDING`, reason
 `PAYMENT_PROVIDER_TIMEOUT`, and a reconciliation outbox event is committed.
-Lookup timeouts leave the existing state unchanged and reschedule
-reconciliation. In either case the worker commits/rolls back its bounded
-failure handling and releases the row lock; it never starts a blind new Order.
+Lookup timeouts leave the payment uncertain and reschedule reconciliation. An
+empty post-fence lookup is handled the same way: it cannot authorize a new Order.
 
 ## Webhooks
 
@@ -101,12 +117,8 @@ signature, event id, API secret, or webhook secret.
 
 ## Configuration
 
-Required values are `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
-`RAZORPAY_WEBHOOK_SECRET`, and
-`RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED=true`. Before setting the final
-value, an operator must enable **reject orders with duplicate receipts** in the
-Razorpay merchant dashboard. The environment value records that manual
-provider-side configuration; it does not perform it. Secrets use redacted
-settings types and are never returned by APIs or written to audit payloads. The
-test key id is public and is returned only for Razorpay test PaymentIntents
-because Checkout legitimately requires it.
+Required values are `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and
+`RAZORPAY_WEBHOOK_SECRET`. There is no receipt-uniqueness acknowledgement flag.
+Secrets use redacted settings types and are never returned by APIs or written to
+audit payloads. The test key id is public and is returned only for Razorpay test
+PaymentIntents because Checkout legitimately requires it.

@@ -15,17 +15,14 @@ Four possible answers, four honest conclusions::
     SUCCEEDED  -> link the provider payment, state SUCCEEDED
     FAILED     -> state FAILED_TERMINAL
     PENDING    -> still genuinely unresolved; poll again with backoff
-    not found  -> before any provider id was linked, the provider holds NOTHING
-                  for this key, so re-creating cannot duplicate anything. Once
-                  an id was linked, not-found is only an unresolved provider
-                  inconsistency and can never license a replacement payment.
+    not found  -> for an idempotent-create provider, a retry may be scheduled;
+                  for a fenced provider, remain uncertain and never recreate.
+                  Once an id was linked, not-found is always unresolved.
 
-The last line is the crux. FAILED_RETRYABLE is reachable from
-PROVIDER_PENDING through exactly one route — a provider that positively reports
-holding no payment for the durable idempotency key *before* PACTRA ever linked
-a provider object. There is no timeout, no elapsed timer, no attempt count, and
-no later failure to fetch a once-linked id that promotes an uncertain payment
-back to retryable, because none of those is evidence about whether money moved.
+The create fence is the crux. Once it exists, no timeout, empty search, elapsed
+timer, attempt count, or later failure can promote a Razorpay intent back to a
+create-capable state. Empty search after the fence cannot distinguish a crash
+before POST from a created Order that is temporarily absent from search.
 """
 
 from __future__ import annotations
@@ -36,20 +33,27 @@ from apps.api.db.models import OutboxEventRow, PaymentIntentRow
 from packages.schemas.capability import Capability, CapabilitySet
 from packages.schemas.domain import EventType, ReasonCode, as_utc, utcnow
 from packages.schemas.payment import PaymentIntentState
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.audit_ledger.ledger import append_event
 from services.payment_executor.executor import (
     ACTOR,
     DispatchResult,
+    apply_payment_transition,
     apply_provider_payment,
     lock_payment_intent,
     provider_evidence_payload,
+    record_payment_attempt,
+    remember_provider_ambiguity,
+    validate_provider_payment,
     validate_provider_route,
+    verify_intent_authorization_before_provider_io,
 )
 from services.payment_executor.outbox import complete_event, reschedule_event
 from services.payment_executor.providers.base import (
     PaymentProvider,
+    ProviderAmbiguity,
     ProviderError,
     ProviderPaymentMismatch,
 )
@@ -87,6 +91,39 @@ async def reconcile_intent(
         await complete_event(session, event=event, now=moment)
         return DispatchResult(state=current, provider_called=False, retry_scheduled=False)
 
+    await verify_intent_authorization_before_provider_io(
+        session, intent=intent, event=event, now=moment
+    )
+    if (
+        not getattr(provider, "create_retries_are_idempotent", False)
+        and intent.provider_create_fenced_at is None
+    ):
+        # Defensive closure for upgraded/legacy state: reconciliation can never
+        # become a create-fence winner. It consumes permission before lookup,
+        # commits, reloads, and remains search-only.
+        await session.execute(
+            update(PaymentIntentRow)
+            .where(
+                PaymentIntentRow.id == intent.id,
+                PaymentIntentRow.provider_create_fenced_at.is_(None),
+            )
+            .values(provider_create_fenced_at=moment)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+        intent = await lock_payment_intent(session, intent.id)
+        validate_provider_route(intent=intent, provider=provider)
+        current = PaymentIntentState(intent.state)
+        if is_terminal(current):
+            await complete_event(session, event=event, now=moment)
+            return DispatchResult(
+                state=current,
+                provider_called=False,
+                retry_scheduled=False,
+            )
+        await verify_intent_authorization_before_provider_io(
+            session, intent=intent, event=event, now=moment
+        )
     try:
         payment = await provider.get_payment(
             provider_payment_id=intent.provider_payment_id,
@@ -95,6 +132,40 @@ async def reconcile_intent(
     except ProviderError as error:
         # Could not ask. Uncertainty is unchanged — which is the correct
         # outcome, not a failure to record. Try again later.
+        if isinstance(error, ProviderAmbiguity):
+            remember_provider_ambiguity(intent, now=moment)
+            if current != PaymentIntentState.PROVIDER_PENDING:
+                await apply_payment_transition(
+                    session,
+                    intent=intent,
+                    target=PaymentIntentState.PROVIDER_PENDING,
+                    event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
+                    payload={
+                        "provider": intent.provider,
+                        "provider_ambiguity_observed": True,
+                        "replacement_create_permitted": False,
+                        "detail": error.detail,
+                    },
+                    reason_code=ReasonCode.PROVIDER_AMBIGUITY.value,
+                )
+                current = PaymentIntentState.PROVIDER_PENDING
+            else:
+                await session.flush()
+                await append_event(
+                    session,
+                    mission_id=intent.mission_id,
+                    event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
+                    actor=ACTOR,
+                    payload={
+                        "payment_intent_id": str(intent.id),
+                        "state": current.value,
+                        "provider": intent.provider,
+                        "provider_ambiguity_observed": True,
+                        "replacement_create_permitted": False,
+                        "detail": error.detail,
+                        "reason_code": ReasonCode.PROVIDER_AMBIGUITY.value,
+                    },
+                )
         retried = await reschedule_event(session, event=event, reason=error.detail, now=moment)
         await append_event(
             session,
@@ -113,6 +184,59 @@ async def reconcile_intent(
             },
         )
         return DispatchResult(state=current, provider_called=True, retry_scheduled=retried)
+
+    if intent.provider_ambiguity_observed_at is not None:
+        # A later empty/single result cannot disprove previously observed
+        # multiple exact Orders. Keep the durable ambiguity and never adopt,
+        # settle, or restore create permission automatically.
+        if current != PaymentIntentState.PROVIDER_PENDING:
+            await apply_payment_transition(
+                session,
+                intent=intent,
+                target=PaymentIntentState.PROVIDER_PENDING,
+                event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
+                payload={
+                    "provider": intent.provider,
+                    "provider_ambiguity_observed": True,
+                    "replacement_create_permitted": False,
+                    "resolution": "operator_review",
+                },
+                reason_code=ReasonCode.PROVIDER_AMBIGUITY.value,
+            )
+            current = PaymentIntentState.PROVIDER_PENDING
+        else:
+            remember_provider_ambiguity(intent, now=moment)
+            await session.flush()
+        retried = await reschedule_event(
+            session,
+            event=event,
+            reason="known provider ambiguity remains unresolved",
+            now=moment,
+        )
+        await append_event(
+            session,
+            mission_id=intent.mission_id,
+            event_type=EventType.PAYMENT_RECONCILED,
+            actor=ACTOR,
+            payload={
+                "payment_intent_id": str(intent.id),
+                "provider": intent.provider,
+                "reason_code": ReasonCode.PROVIDER_AMBIGUITY.value,
+                "provider_ambiguity_observed": True,
+                "current_search_result": (
+                    "no_exact_match" if payment is None else "one_exact_candidate"
+                ),
+                **({} if payment is None else provider_evidence_payload(payment)),
+                "candidate_adopted": False,
+                "replacement_create_permitted": False,
+                "manual_recovery_required": True,
+            },
+        )
+        return DispatchResult(
+            state=current,
+            provider_called=True,
+            retry_scheduled=retried,
+        )
 
     if payment is None:
         if intent.provider_payment_id is not None:
@@ -162,11 +286,98 @@ async def reconcile_intent(
                 provider_called=True,
                 retry_scheduled=retried,
             )
+        if intent.provider_create_fenced_at is not None and not getattr(
+            provider, "create_retries_are_idempotent", False
+        ):
+            # The fence is permanent. An empty search may mean the process died
+            # before POST, or that Razorpay accepted an Order which is not yet
+            # visible. Neither observation permits PACTRA to choose between
+            # them, so availability yields to duplicate-payment safety.
+            if current != PaymentIntentState.PROVIDER_PENDING:
+                await apply_payment_transition(
+                    session,
+                    intent=intent,
+                    target=PaymentIntentState.PROVIDER_PENDING,
+                    event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
+                    payload={
+                        "provider": intent.provider,
+                        "provider_create_fenced": True,
+                        "provider_payment_may_exist": True,
+                        "replacement_create_permitted": False,
+                        "resolution": "reconciliation_or_operator_review",
+                    },
+                    reason_code=ReasonCode.PROVIDER_CREATE_FENCED.value,
+                )
+                current = PaymentIntentState.PROVIDER_PENDING
+            else:
+                intent.last_reason_code = ReasonCode.PROVIDER_CREATE_FENCED.value
+                await session.flush()
+            retried = await reschedule_event(
+                session,
+                event=event,
+                reason="fenced create has no visible provider Order",
+                now=moment,
+            )
+            await append_event(
+                session,
+                mission_id=intent.mission_id,
+                event_type=EventType.PAYMENT_RECONCILED,
+                actor=ACTOR,
+                payload={
+                    "payment_intent_id": str(intent.id),
+                    "provider": intent.provider,
+                    "reason_code": ReasonCode.PROVIDER_CREATE_FENCED.value,
+                    "provider_search_found_no_match": True,
+                    "provider_create_fenced": True,
+                    "replacement_create_permitted": False,
+                    "manual_recovery_may_be_required": True,
+                },
+            )
+            await append_event(
+                session,
+                mission_id=intent.mission_id,
+                event_type=(
+                    EventType.PAYMENT_RETRY_SCHEDULED
+                    if retried
+                    else EventType.OUTBOX_EVENT_DEAD_LETTERED
+                ),
+                actor=ACTOR,
+                payload={
+                    "payment_intent_id": str(intent.id),
+                    "outbox_event_id": str(event.id),
+                    "reason_code": ReasonCode.PROVIDER_CREATE_FENCED.value,
+                    "phase": "fenced-create-reconciliation",
+                },
+            )
+            return DispatchResult(
+                state=current,
+                provider_called=True,
+                retry_scheduled=retried,
+            )
         return await _resolve_no_provider_payment(
             session, intent=intent, event=event, now=moment, current=current
         )
 
     try:
+        # QUEUED + fence is the intentional post-fence/pre-POST crash state.
+        # Provider evidence makes PROCESSING/PAYMENT_ATTEMPTED truthful and
+        # gives apply_provider_payment a legal path to any provider outcome.
+        validate_provider_payment(
+            intent=intent,
+            payment=payment,
+            require_idempotency_key=intent.provider_payment_id is None,
+        )
+        if current in {
+            PaymentIntentState.QUEUED,
+            PaymentIntentState.FAILED_RETRYABLE,
+        }:
+            await record_payment_attempt(
+                session,
+                intent=intent,
+                provider_create_invoked=False,
+                recovered_existing=True,
+            )
+            current = PaymentIntentState.PROCESSING
         state = await apply_provider_payment(session, intent=intent, payment=payment, now=moment)
     except ProviderPaymentMismatch as mismatch:
         retried = await reschedule_event(
@@ -232,7 +443,7 @@ async def _resolve_no_provider_payment(
     now: datetime,
     current: PaymentIntentState,
 ) -> DispatchResult:
-    """The provider holds nothing for this key.
+    """An idempotent-create provider reports no payment for this key.
 
     This is positive evidence, not an absence of evidence: the provider was
     asked and answered. It is therefore safe — and only now safe — to make the
@@ -248,7 +459,7 @@ async def _resolve_no_provider_payment(
             "provider": intent.provider,
             "reason_code": ReasonCode.PROVIDER_PAYMENT_NOT_FOUND.value,
             "provider_holds_no_payment": True,
-            "conclusion": "safe to retry creation; no duplicate is possible",
+            "conclusion": "provider create contract makes a same-key retry idempotent",
         },
     )
 

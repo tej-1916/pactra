@@ -122,11 +122,9 @@ def provider_status_to_state(status: ProviderPaymentStatus) -> PaymentIntentStat
 class PaymentRequest(BaseModel):
     """What PACTRA asks a provider to do. Built entirely from server-side state.
 
-    ``idempotency_key`` is passed to the provider as well as being PACTRA's own
-    unique key, so provider-side idempotency and PACTRA-side idempotency
-    correlate on the same value. That correlation is what makes a lost response
-    recoverable: the payment the provider may have created is findable by the
-    key PACTRA already holds.
+    ``idempotency_key`` is PACTRA's unique logical-payment key and is passed to
+    adapters as the recovery correlation. An adapter may derive a bounded
+    provider reference from it; this does not imply provider-side idempotency.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -163,8 +161,8 @@ class ProviderPayment(BaseModel):
     provider_status: str | None = Field(default=None, min_length=1, max_length=40)
     provider_attempts: int | None = Field(default=None, ge=0)
     #: True when the provider returned an ALREADY EXISTING payment for this
-    #: idempotency key rather than creating a new one. Provider-side idempotency
-    #: is what makes a blind retry safe at the second layer.
+    #: idempotency key rather than creating a new one. Only a verified
+    #: idempotent-create contract can make repeated creates safe.
     idempotent_replay: bool = False
 
 

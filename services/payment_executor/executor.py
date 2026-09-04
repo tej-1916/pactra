@@ -10,14 +10,12 @@ The one rule that makes this safe
 A ``ProviderTimeout`` is never resolved by guessing. It means the call did not
 complete, and PACTRA cannot know whether a payment was created. The intent moves
 to ``PROVIDER_PENDING`` — the uncertain state — and a reconciliation event is
-scheduled. Nothing re-creates a payment until reconciliation has established
-that the provider holds none.
+scheduled.
 
-The provider is also handed the idempotency key on every attempt, so even the
-retry that reconciliation authorizes is deduplicated provider-side. The two
-layers are independent on purpose: PACTRA's uncertainty handling does not
-assume provider idempotency, and provider idempotency does not excuse blind
-retries.
+Providers with a genuine idempotent-create contract may retry only after a
+successful not-found lookup. Razorpay has no verified contract of that kind:
+PACTRA commits a one-way local fence before its sole create call, and an empty
+post-fence lookup can never authorize another create.
 """
 
 from __future__ import annotations
@@ -38,7 +36,7 @@ from packages.schemas.payment import (
     ProviderPaymentStatus,
     provider_status_to_state,
 )
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent_orchestrator.state_machine import can_transition
@@ -265,6 +263,49 @@ def validate_provider_route(*, intent: PaymentIntentRow, provider: PaymentProvid
         )
 
 
+async def verify_intent_authorization_before_provider_io(
+    session: AsyncSession,
+    *,
+    intent: PaymentIntentRow,
+    event: OutboxEventRow,
+    now: datetime,
+) -> None:
+    """Re-verify proof and full transaction binding immediately before I/O."""
+    authorization = await session.get(
+        AuthorizationRow,
+        intent.authorization_id,
+        populate_existing=True,
+    )
+    if authorization is None:  # pragma: no cover - FK normally prevents this
+        raise AuthorizationNotFound(intent.authorization_id, "authorization no longer exists")
+    transaction = await verify_authorization_for_payment(
+        session,
+        row=authorization,
+        expected_status=AuthorizationStatus.CONSUMED,
+        now=now,
+    )
+    mismatches: list[str] = []
+    if authorization.mission_id != intent.mission_id:
+        mismatches.append("mission_id")
+    if authorization.authorization_id != intent.authorization_id:
+        mismatches.append("authorization_id")
+    if authorization.transaction_digest != intent.transaction_digest:
+        mismatches.append("transaction_digest")
+    if transaction.merchant_id != intent.merchant_id:
+        mismatches.append("merchant_id")
+    if transaction.amount_inr != intent.amount_inr:
+        mismatches.append("amount_inr")
+    if transaction.currency != intent.currency:
+        mismatches.append("currency")
+    if event.payment_intent_id != intent.id:
+        mismatches.append("outbox.payment_intent_id")
+    if mismatches:
+        raise TransactionBindingFailure(
+            authorization.authorization_id,
+            "durable payment intent disagrees with authorization: " + ", ".join(mismatches),
+        )
+
+
 async def apply_provider_payment(
     session: AsyncSession,
     *,
@@ -360,6 +401,13 @@ async def _mark_uncertain(
     Keeping them apart means the audit trail shows the inference, not just the
     result.
     """
+    observed_reason_code = reason_code
+    if (
+        reason_code == ReasonCode.PROVIDER_AMBIGUITY.value
+        or intent.provider_ambiguity_observed_at is not None
+    ):
+        remember_provider_ambiguity(intent, now=now)
+        reason_code = ReasonCode.PROVIDER_AMBIGUITY.value
     if timed_out:
         await append_event(
             session,
@@ -368,26 +416,49 @@ async def _mark_uncertain(
             actor=ACTOR,
             payload={
                 "payment_intent_id": str(intent.id),
-                "reason_code": reason_code,
+                "reason_code": observed_reason_code,
                 "provider": intent.provider,
                 "detail": detail,
+                "provider_ambiguity_remains": (intent.provider_ambiguity_observed_at is not None),
             },
         )
-    await apply_payment_transition(
-        session,
-        intent=intent,
-        target=PaymentIntentState.PROVIDER_PENDING,
-        event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
-        payload={
-            "provider": intent.provider,
-            # Said plainly, because this is the whole point of the state.
-            "provider_payment_may_exist": True,
-            "resolution": "reconciliation",
-            "reason_code": reason_code,
-            "detail": detail,
-        },
-        reason_code=reason_code,
-    )
+    payload = {
+        "provider": intent.provider,
+        # Said plainly, because this is the whole point of the state.
+        "provider_payment_may_exist": True,
+        "resolution": "reconciliation",
+        "provider_create_fenced": intent.provider_create_fenced_at is not None,
+        "provider_ambiguity_observed": intent.provider_ambiguity_observed_at is not None,
+        "replacement_create_permitted": False
+        if intent.provider_create_fenced_at is not None
+        else None,
+        "detail": detail,
+    }
+    current = PaymentIntentState(intent.state)
+    if current == PaymentIntentState.PROVIDER_PENDING:
+        intent.last_reason_code = reason_code
+        await session.flush()
+        await append_event(
+            session,
+            mission_id=intent.mission_id,
+            event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
+            actor=ACTOR,
+            payload={
+                "payment_intent_id": str(intent.id),
+                "state": PaymentIntentState.PROVIDER_PENDING.value,
+                **payload,
+                "reason_code": reason_code,
+            },
+        )
+    else:
+        await apply_payment_transition(
+            session,
+            intent=intent,
+            target=PaymentIntentState.PROVIDER_PENDING,
+            event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
+            payload=payload,
+            reason_code=reason_code,
+        )
     await enqueue_outbox_event(
         session,
         payment_intent_id=intent.id,
@@ -395,6 +466,208 @@ async def _mark_uncertain(
         payload={"idempotency_key": intent.idempotency_key},
         available_at=now,
     )
+
+
+def remember_provider_ambiguity(intent: PaymentIntentRow, *, now: datetime) -> None:
+    """Persist the first observed multiple-match fact without ever clearing it."""
+    if intent.provider_ambiguity_observed_at is None:
+        intent.provider_ambiguity_observed_at = now
+    intent.last_reason_code = ReasonCode.PROVIDER_AMBIGUITY.value
+
+
+async def record_payment_attempt(
+    session: AsyncSession,
+    *,
+    intent: PaymentIntentRow,
+    provider_create_invoked: bool,
+    recovered_existing: bool = False,
+) -> None:
+    """Record execution only after provider evidence or create invocation."""
+    current = PaymentIntentState(intent.state)
+    if current == PaymentIntentState.FAILED_RETRYABLE:
+        assert_payment_transition(current, PaymentIntentState.QUEUED)
+        intent.state = PaymentIntentState.QUEUED.value
+        current = PaymentIntentState.QUEUED
+    if current == PaymentIntentState.PROCESSING:
+        return
+    if current != PaymentIntentState.QUEUED:
+        return
+    await apply_payment_transition(
+        session,
+        intent=intent,
+        target=PaymentIntentState.PROCESSING,
+        event_type=EventType.PAYMENT_ATTEMPTED,
+        payload={
+            "provider": intent.provider,
+            "attempt": intent.attempts + 1,
+            "provider_create_invoked": provider_create_invoked,
+            "recovered_existing_provider_payment": recovered_existing,
+        },
+    )
+    intent.attempts += 1
+    await session.flush()
+
+
+async def _finish_existing_before_create(
+    session: AsyncSession,
+    *,
+    intent: PaymentIntentRow,
+    event: OutboxEventRow,
+    existing: ProviderPayment,
+    now: datetime,
+) -> DispatchResult:
+    if intent.provider_ambiguity_observed_at is not None:
+        await _mark_uncertain(
+            session,
+            intent=intent,
+            detail=(
+                "one Order is currently visible, but multiple exact Orders were observed "
+                "previously; automatic adoption remains prohibited"
+            ),
+            now=now,
+            reason_code=ReasonCode.PROVIDER_AMBIGUITY.value,
+            timed_out=False,
+        )
+        await complete_event(session, event=event, now=now)
+        return DispatchResult(
+            state=PaymentIntentState.PROVIDER_PENDING,
+            provider_called=True,
+            retry_scheduled=True,
+        )
+    try:
+        # A matching receipt is only candidate evidence. Validate the provider's
+        # transaction fields before recording PAYMENT_ATTEMPTED.
+        validate_provider_payment(
+            intent=intent,
+            payment=existing,
+            require_idempotency_key=True,
+        )
+        await record_payment_attempt(
+            session,
+            intent=intent,
+            provider_create_invoked=False,
+            recovered_existing=True,
+        )
+        state = await apply_provider_payment(session, intent=intent, payment=existing, now=now)
+    except ProviderPaymentMismatch as mismatch:
+        await _mark_uncertain(
+            session,
+            intent=intent,
+            detail=mismatch.detail,
+            now=now,
+            reason_code=mismatch.reason_code,
+            timed_out=False,
+        )
+        await complete_event(session, event=event, now=now)
+        return DispatchResult(
+            state=PaymentIntentState.PROVIDER_PENDING,
+            provider_called=True,
+            retry_scheduled=True,
+        )
+
+    await append_event(
+        session,
+        mission_id=intent.mission_id,
+        event_type=EventType.PAYMENT_RECONCILED,
+        actor=ACTOR,
+        payload={
+            "payment_intent_id": str(intent.id),
+            "provider": intent.provider,
+            **provider_evidence_payload(existing),
+            "state": state.value,
+            "recovered_before_create": True,
+            "provider_create_fenced": intent.provider_create_fenced_at is not None,
+        },
+    )
+    if state == PaymentIntentState.PROVIDER_PENDING:
+        await enqueue_outbox_event(
+            session,
+            payment_intent_id=intent.id,
+            event_type=OutboxEventType.PAYMENT_RECONCILE_REQUESTED,
+            payload={"idempotency_key": intent.idempotency_key},
+            available_at=now,
+        )
+    await complete_event(session, event=event, now=now)
+    return DispatchResult(
+        state=state,
+        provider_called=True,
+        retry_scheduled=state == PaymentIntentState.PROVIDER_PENDING,
+    )
+
+
+async def _recover_fenced_create(
+    session: AsyncSession,
+    *,
+    provider: PaymentProvider,
+    intent: PaymentIntentRow,
+    event: OutboxEventRow,
+    now: datetime,
+) -> DispatchResult:
+    """Search/reconcile a fenced intent without any path to create."""
+    await verify_intent_authorization_before_provider_io(
+        session, intent=intent, event=event, now=now
+    )
+    try:
+        existing = await provider.get_payment(idempotency_key=intent.idempotency_key)
+    except ProviderError as lookup_error:
+        await _mark_uncertain(
+            session,
+            intent=intent,
+            detail=f"fenced create recovery lookup failed: {lookup_error.detail}",
+            now=now,
+            reason_code=lookup_error.reason_code,
+            timed_out=isinstance(lookup_error, ProviderTimeout),
+        )
+        await complete_event(session, event=event, now=now)
+        return DispatchResult(
+            state=PaymentIntentState.PROVIDER_PENDING,
+            provider_called=True,
+            retry_scheduled=True,
+        )
+    if existing is not None:
+        return await _finish_existing_before_create(
+            session,
+            intent=intent,
+            event=event,
+            existing=existing,
+            now=now,
+        )
+    await _mark_uncertain(
+        session,
+        intent=intent,
+        detail="create permission is fenced and receipt search found no Order",
+        now=now,
+        reason_code=ReasonCode.PROVIDER_CREATE_FENCED.value,
+        timed_out=False,
+    )
+    await complete_event(session, event=event, now=now)
+    return DispatchResult(
+        state=PaymentIntentState.PROVIDER_PENDING,
+        provider_called=True,
+        retry_scheduled=True,
+    )
+
+
+async def acquire_provider_create_fence(
+    session: AsyncSession,
+    *,
+    intent: PaymentIntentRow,
+    now: datetime,
+) -> bool:
+    """Commit the one-way create-permission CAS and report whether it won."""
+    fence_result = await session.execute(
+        update(PaymentIntentRow)
+        .where(
+            PaymentIntentRow.id == intent.id,
+            PaymentIntentRow.state == PaymentIntentState.QUEUED.value,
+            PaymentIntentRow.provider_create_fenced_at.is_(None),
+        )
+        .values(provider_create_fenced_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    fence_acquired = isinstance(fence_result, CursorResult) and fence_result.rowcount == 1
+    await session.commit()
+    return fence_acquired
 
 
 async def dispatch_create(
@@ -406,27 +679,30 @@ async def dispatch_create(
     event: OutboxEventRow,
     now: datetime | None = None,
 ) -> DispatchResult:
-    """Attempt the provider call for one claimed ``PAYMENT_CREATE_REQUESTED``.
-
-    PRIVILEGED: ``payment.execute`` is enforced before the provider is touched.
-    """
+    """Handle one create instruction under the provider's retry contract."""
     enforce_registered(capabilities, Capability.PAYMENT_EXECUTE)
     intent = await lock_payment_intent(session, intent.id)
     moment = as_utc(now or utcnow())
     current = PaymentIntentState(intent.state)
-
-    # A routing mistake must be caught before either adapter method is called.
     validate_provider_route(intent=intent, provider=provider)
 
-    # A duplicate delivery of an event for an already-settled payment. Doing
-    # nothing here is what makes test "duplicate outbox processing creates no
-    # duplicate provider payment" hold even before provider idempotency helps.
     if is_terminal(current):
         await complete_event(session, event=event, now=moment)
         return DispatchResult(state=current, provider_called=False, retry_scheduled=False)
 
-    # The intent is uncertain: a provider payment may already exist. Creating
-    # another would be the duplicate charge. Convert this into reconciliation.
+    create_retries_are_idempotent = getattr(provider, "create_retries_are_idempotent", False)
+
+    # A pre-existing fence wins over every non-terminal state. This invocation
+    # did not acquire it, so it can only search/reconcile and can never create.
+    if not create_retries_are_idempotent and intent.provider_create_fenced_at is not None:
+        return await _recover_fenced_create(
+            session,
+            provider=provider,
+            intent=intent,
+            event=event,
+            now=moment,
+        )
+
     if current == PaymentIntentState.PROVIDER_PENDING:
         await enqueue_outbox_event(
             session,
@@ -442,59 +718,40 @@ async def dispatch_create(
         assert_payment_transition(current, PaymentIntentState.QUEUED)
         intent.state = PaymentIntentState.QUEUED.value
         current = PaymentIntentState.QUEUED
-
     if current != PaymentIntentState.QUEUED:
         raise IllegalPaymentTransition(current, PaymentIntentState.PROCESSING)
 
-    # FINAL SECURITY GATE. Reload the durable authorization and re-verify its
-    # stored proof immediately before any provider lookup/create call. The
-    # authorization is already CONSUMED: expiry was enforced atomically when
-    # the PaymentIntent/outbox became durable, so queue delay does not revoke
-    # that authorized work. Compare every transaction field copied onto the
-    # intent so post-queue corruption still fails closed before provider I/O.
-    authorization = await session.get(
-        AuthorizationRow,
-        intent.authorization_id,
-        populate_existing=True,
+    # For non-idempotent create, consume permission BEFORE the first provider
+    # lookup. Only this compare-and-set winner can proceed toward the possible
+    # initial POST. The committed timestamp says nothing about provider I/O.
+    await verify_intent_authorization_before_provider_io(
+        session, intent=intent, event=event, now=moment
     )
-    if authorization is None:  # pragma: no cover - FK normally prevents this
-        raise AuthorizationNotFound(intent.authorization_id, "authorization no longer exists")
-    transaction = await verify_authorization_for_payment(
-        session,
-        row=authorization,
-        expected_status=AuthorizationStatus.CONSUMED,
-        now=moment,
-    )
-    mismatches: list[str] = []
-    if authorization.mission_id != intent.mission_id:
-        mismatches.append("mission_id")
-    if authorization.authorization_id != intent.authorization_id:
-        mismatches.append("authorization_id")
-    if authorization.transaction_digest != intent.transaction_digest:
-        mismatches.append("transaction_digest")
-    if transaction.merchant_id != intent.merchant_id:
-        mismatches.append("merchant_id")
-    if transaction.amount_inr != intent.amount_inr:
-        mismatches.append("amount_inr")
-    if transaction.currency != intent.currency:
-        mismatches.append("currency")
-    if event.payment_intent_id != intent.id:
-        mismatches.append("outbox.payment_intent_id")
-    if mismatches:
-        raise TransactionBindingFailure(
-            authorization.authorization_id,
-            "durable payment intent disagrees with authorization: " + ", ".join(mismatches),
+    if not create_retries_are_idempotent:
+        fence_acquired = await acquire_provider_create_fence(
+            session,
+            intent=intent,
+            now=moment,
         )
 
-    await apply_payment_transition(
-        session,
-        intent=intent,
-        target=PaymentIntentState.PROCESSING,
-        event_type=EventType.PAYMENT_ATTEMPTED,
-        payload={"provider": intent.provider, "attempt": intent.attempts + 1},
-    )
-    intent.attempts += 1
-    await session.flush()
+        intent = await lock_payment_intent(session, intent.id)
+        validate_provider_route(intent=intent, provider=provider)
+        if intent.provider_create_fenced_at is None:  # pragma: no cover - DB invariant check
+            raise RuntimeError("provider create fence was not durable")
+        if not fence_acquired or PaymentIntentState(intent.state) != PaymentIntentState.QUEUED:
+            return await _recover_fenced_create(
+                session,
+                provider=provider,
+                intent=intent,
+                event=event,
+                now=moment,
+            )
+
+        # The fence commit is a transaction boundary. Re-verify before the
+        # post-fence receipt search so no provider I/O trusts stale authority.
+        await verify_intent_authorization_before_provider_io(
+            session, intent=intent, event=event, now=moment
+        )
 
     request = PaymentRequest(
         idempotency_key=intent.idempotency_key,
@@ -504,11 +761,9 @@ async def dispatch_create(
         transaction_digest_prefix=intent.transaction_digest[:DIGEST_LOG_PREFIX],
     )
 
-    # Recovery-safe preflight.  The local PROCESSING transition may have been
-    # rolled back after an earlier provider success.  Looking up the durable
-    # idempotency key before every create lets us adopt that payment without a
-    # blind second create, even when the provider's create endpoint itself is
-    # not idempotent.
+    # Deterministic-receipt preflight. For Razorpay the one-way fence is already
+    # durable. Failure cannot fall through; one match is validated/adopted and
+    # multiple exact matches persist monotonic provider ambiguity.
     try:
         existing = await provider.get_payment(idempotency_key=intent.idempotency_key)
     except ProviderError as lookup_error:
@@ -526,19 +781,58 @@ async def dispatch_create(
             provider_called=True,
             retry_scheduled=True,
         )
-
     if existing is not None:
-        try:
-            state = await apply_provider_payment(
-                session, intent=intent, payment=existing, now=moment
-            )
-        except ProviderPaymentMismatch as mismatch:
+        return await _finish_existing_before_create(
+            session,
+            intent=intent,
+            event=event,
+            existing=existing,
+            now=moment,
+        )
+
+    # Re-check immediately before create I/O. For Razorpay, this invocation is
+    # still the sole fence winner; every other invocation returned through the
+    # search-only recovery path above.
+    await verify_intent_authorization_before_provider_io(
+        session, intent=intent, event=event, now=moment
+    )
+
+    payment: ProviderPayment | None = None
+    create_error: ProviderError | None = None
+    try:
+        payment = await provider.create_payment(request)
+    except (ProviderTimeout, ProviderTransientError, ProviderTerminalError) as error:
+        create_error = error
+
+    # Reaching this line proves create_payment was invoked. Only now is a
+    # PAYMENT_ATTEMPTED fact justified. For Razorpay, the fence already survived
+    # independently if the process died before this local transaction commits.
+    intent = await lock_payment_intent(session, intent.id)
+    await record_payment_attempt(
+        session,
+        intent=intent,
+        provider_create_invoked=True,
+    )
+
+    if isinstance(create_error, ProviderTimeout):
+        await _mark_uncertain(session, intent=intent, detail=create_error.detail, now=moment)
+        await complete_event(session, event=event, now=moment)
+        return DispatchResult(
+            state=PaymentIntentState.PROVIDER_PENDING,
+            provider_called=True,
+            retry_scheduled=True,
+        )
+    if isinstance(create_error, ProviderTransientError):
+        if not create_retries_are_idempotent:
             await _mark_uncertain(
                 session,
                 intent=intent,
-                detail=mismatch.detail,
+                detail=(
+                    "provider refused the fenced create transiently; automatic create retry "
+                    "remains prohibited"
+                ),
                 now=moment,
-                reason_code=mismatch.reason_code,
+                reason_code=create_error.reason_code,
                 timed_out=False,
             )
             await complete_event(session, event=event, now=moment)
@@ -547,47 +841,6 @@ async def dispatch_create(
                 provider_called=True,
                 retry_scheduled=True,
             )
-
-        await append_event(
-            session,
-            mission_id=intent.mission_id,
-            event_type=EventType.PAYMENT_RECONCILED,
-            actor=ACTOR,
-            payload={
-                "payment_intent_id": str(intent.id),
-                "provider": intent.provider,
-                **provider_evidence_payload(existing),
-                "state": state.value,
-                "recovered_before_create": True,
-            },
-        )
-        if state == PaymentIntentState.PROVIDER_PENDING:
-            await enqueue_outbox_event(
-                session,
-                payment_intent_id=intent.id,
-                event_type=OutboxEventType.PAYMENT_RECONCILE_REQUESTED,
-                payload={"idempotency_key": intent.idempotency_key},
-                available_at=moment,
-            )
-        await complete_event(session, event=event, now=moment)
-        return DispatchResult(
-            state=state,
-            provider_called=True,
-            retry_scheduled=state == PaymentIntentState.PROVIDER_PENDING,
-        )
-
-    try:
-        payment = await provider.create_payment(request)
-    except ProviderTimeout as timeout:
-        await _mark_uncertain(session, intent=intent, detail=timeout.detail, now=moment)
-        await complete_event(session, event=event, now=moment)
-        return DispatchResult(
-            state=PaymentIntentState.PROVIDER_PENDING,
-            provider_called=True,
-            retry_scheduled=True,
-        )
-    except ProviderTransientError as transient:
-        # The provider ANSWERED. Nothing was created, so a retry is safe.
         await apply_payment_transition(
             session,
             intent=intent,
@@ -596,20 +849,26 @@ async def dispatch_create(
             payload={"provider": intent.provider, "retryable": True},
             reason_code=ReasonCode.PROVIDER_TRANSIENT_FAILURE.value,
         )
-        retried = await reschedule_event(session, event=event, reason=transient.detail, now=moment)
+        retried = await reschedule_event(
+            session, event=event, reason=create_error.detail, now=moment
+        )
         await _audit_retry(session, intent=intent, retried=retried, event=event)
         return DispatchResult(
             state=PaymentIntentState.FAILED_RETRYABLE,
             provider_called=True,
             retry_scheduled=retried,
         )
-    except ProviderTerminalError as terminal:
+    if isinstance(create_error, ProviderTerminalError):
         await apply_payment_transition(
             session,
             intent=intent,
             target=PaymentIntentState.FAILED_TERMINAL,
             event_type=EventType.PAYMENT_FAILED,
-            payload={"provider": intent.provider, "retryable": False, "detail": terminal.detail},
+            payload={
+                "provider": intent.provider,
+                "retryable": False,
+                "detail": create_error.detail,
+            },
             reason_code=ReasonCode.PROVIDER_TERMINAL_FAILURE.value,
         )
         await apply_mission_state(session, intent.mission_id, MissionState.PAYMENT_FAILED)
@@ -620,6 +879,7 @@ async def dispatch_create(
             retry_scheduled=False,
         )
 
+    assert payment is not None
     try:
         validate_provider_payment(
             intent=intent,
@@ -643,7 +903,6 @@ async def dispatch_create(
             retry_scheduled=True,
         )
     if state == PaymentIntentState.PROVIDER_PENDING:
-        # Accepted but not settled: the outcome arrives by webhook or by poll.
         await enqueue_outbox_event(
             session,
             payment_intent_id=intent.id,

@@ -15,8 +15,9 @@ The error taxonomy is the contract that matters most:
     executor must treat it as uncertainty rather than as either outcome.
 
 ``ProviderTransientError``
-    The provider answered, and the answer was "not now". No payment was
-    created. Retrying is safe.
+    The provider operation did not settle successfully, but a later lookup or
+    operation may succeed. This classification alone never licenses another
+    non-idempotent create; the provider contract and durable fence decide that.
 
 ``ProviderTerminalError``
     The provider answered, and the answer was "no". Retrying cannot change it.
@@ -59,9 +60,19 @@ class ProviderTimeout(ProviderError):
 
 
 class ProviderTransientError(ProviderError):
-    """The provider refused for a reason that may not hold on a retry."""
+    """A transient operation failure; never by itself create-retry permission."""
 
     reason_code = "PROVIDER_TRANSIENT_FAILURE"
+
+
+class ProviderAmbiguity(ProviderTransientError):
+    """Provider evidence names more than one possible remote payment.
+
+    This is retryable only as a LOOKUP: a later search may produce clearer
+    evidence.  It never licenses another create operation.
+    """
+
+    reason_code = "PROVIDER_AMBIGUITY"
 
 
 class ProviderTerminalError(ProviderError):
@@ -89,6 +100,11 @@ class PaymentProvider(Protocol):
 
     #: Short provider name, persisted on the intent and used to route webhooks.
     name: str
+    #: True only when repeated create calls with the same idempotency key are
+    #: themselves guaranteed to resolve to one remote payment.  Receipt search
+    #: is not such a guarantee.  Providers that set this false require PACTRA's
+    #: durable one-way create fence.
+    create_retries_are_idempotent: bool
 
     async def create_payment(self, request: PaymentRequest) -> ProviderPayment:
         """Create (or idempotently return) the payment for ``request``.
@@ -96,8 +112,9 @@ class PaymentProvider(Protocol):
         Implementations MUST treat ``request.idempotency_key`` as the provider's
         own idempotency key where the provider supports one, so that a repeated
         call returns the SAME payment instead of creating a second. Where a
-        provider does not support it, the adapter must document the gap rather
-        than pretend the guarantee exists.
+        provider does not support it, the adapter must declare
+        ``create_retries_are_idempotent = False`` so the executor applies its
+        durable one-way create fence.
 
         Raises ``ProviderTimeout`` / ``ProviderTransientError`` /
         ``ProviderTerminalError`` per the taxonomy in this module's docstring.
@@ -114,8 +131,9 @@ class PaymentProvider(Protocol):
 
         Lookup BY IDEMPOTENCY KEY is what makes a lost response recoverable: it
         is the only handle PACTRA still holds after a create call whose response
-        never arrived. Returns ``None`` when the provider holds no such payment
-        — the one answer that makes re-creating it safe.
+        never arrived. ``None`` permits a create retry only when
+        ``create_retries_are_idempotent`` is true. For a fenced provider it is
+        still uncertain and never restores create permission.
         """
         ...
 

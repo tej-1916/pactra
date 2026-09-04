@@ -349,19 +349,22 @@ PROCESSING --timeout--> PROVIDER_PENDING --reconcile--> SUCCEEDED
                                                       | FAILED_RETRYABLE
 ```
 
-`FAILED_RETRYABLE` is reachable from `PROVIDER_PENDING` through exactly one
-route: a provider that positively reports holding no payment for the key. No
-elapsed timer and no attempt count promotes an uncertain payment back to
-retryable, because neither is evidence about whether money moved.
+For a provider with a verified idempotent-create contract, a positive not-found
+lookup can make an intent retryable. Razorpay has no such verified contract, so
+its durable create fence is permanent and an empty lookup remains uncertain.
 
 ### Never a blind retry
 
-Before every create attempt the executor looks the durable idempotency key up at
-the provider. A found payment is validated and adopted without a second create;
-a positively-empty answer makes creation safe; a *failed* lookup keeps the
-intent uncertain and never falls through to create. This does not assume the
-provider deduplicates creates — a deliberately non-idempotent test provider is
-used so provider-side idempotency cannot mask a PACTRA blind-retry bug.
+Before any Razorpay receipt lookup, the executor re-verifies authorization proof
+and binding, atomically acquires `provider_create_fenced_at`, and commits it while
+state remains `QUEUED`. Only that fence winner can continue toward the possible
+initial POST. It re-verifies after the commit, exhausts exact deterministic-
+receipt search, and re-verifies once more before POST when the result is empty.
+The timestamp means create permission was consumed, not that provider I/O
+occurred. Fenced recovery only searches: zero matches remain uncertain, one is
+adopted, and multiple matches persist `provider_ambiguity_observed_at`. Once
+observed, later weaker empty/single results cannot erase that ambiguity or claim
+automatic success.
 
 ### A provider response may report state, never redefine the transaction
 
@@ -382,11 +385,13 @@ duplicate and leave the first charge unreferenced.
 
 ### Worker claim/work split
 
-Claiming and handling run in SEPARATE transactions:
+Claiming and Razorpay fence/result handling run across durable boundaries:
 
 ```text
-TX 1  claim event, persist IN_PROGRESS lease + attempt count   COMMIT
-TX 2  provider I/O, persist local result, acknowledge event    COMMIT
+TX 1  claim event, persist IN_PROGRESS lease + attempt count  COMMIT
+TX 2  verify, persist one-way create fence while QUEUED       COMMIT
+TX 3  re-verify, exhaust receipt search, and only for the
+      fence winner + zero matches, re-verify and invoke create COMMIT
 ```
 
 A crash during provider I/O leaves a durable `IN_PROGRESS` lease rather than

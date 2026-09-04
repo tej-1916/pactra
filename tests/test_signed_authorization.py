@@ -487,6 +487,70 @@ async def test_dispatch_rejects_bad_proof_before_provider_io(session, demo_signe
     assert provider.create_calls == []
 
 
+async def test_fenced_create_reverifies_user_proof_after_preflight_before_create(
+    session, demo_signer
+):
+    _, authorization, intent, event, _ = await _queued_user_payment(
+        session, demo_signer, key="fenced-post-preflight-proof"
+    )
+
+    class CorruptAfterPreflightProvider(FakePaymentProvider):
+        create_retries_are_idempotent = False
+
+        async def get_payment(self, **kwargs):
+            result = await super().get_payment(**kwargs)
+            authorization.approval_signature = "00" * 64
+            return result
+
+    provider = CorruptAfterPreflightProvider()
+    with pytest.raises(AuthorizationProofFailure):
+        await dispatch_create(
+            session,
+            capabilities=EXECUTOR,
+            provider=provider,
+            intent=intent,
+            event=event,
+        )
+
+    await session.refresh(intent)
+    assert intent.provider_create_fenced_at is not None
+    assert intent.state == "QUEUED"
+    assert provider.get_calls
+    assert provider.create_calls == []
+
+
+async def test_fenced_create_reverifies_transaction_binding_after_preflight_before_create(
+    session, demo_signer
+):
+    _, _, intent, event, _ = await _queued_user_payment(
+        session, demo_signer, key="fenced-post-preflight-binding"
+    )
+
+    class CorruptAfterPreflightProvider(FakePaymentProvider):
+        create_retries_are_idempotent = False
+
+        async def get_payment(self, **kwargs):
+            result = await super().get_payment(**kwargs)
+            intent.amount_inr += 1
+            return result
+
+    provider = CorruptAfterPreflightProvider()
+    with pytest.raises(TransactionBindingFailure):
+        await dispatch_create(
+            session,
+            capabilities=EXECUTOR,
+            provider=provider,
+            intent=intent,
+            event=event,
+        )
+
+    await session.refresh(intent)
+    assert intent.provider_create_fenced_at is not None
+    assert intent.state == "QUEUED"
+    assert provider.get_calls
+    assert provider.create_calls == []
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

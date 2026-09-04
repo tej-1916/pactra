@@ -314,6 +314,20 @@ class PaymentIntentRow(Base):
     provider_receipt: Mapped[str | None] = mapped_column(String(200), nullable=True)
     provider_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
     provider_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # One-way local safety fence for providers whose create operation cannot be
+    # retried idempotently.  A non-NULL value means PACTRA permanently consumed
+    # permission to issue the initial create.  It deliberately does NOT mean an
+    # HTTP request reached the provider: the process may have crashed after this
+    # value committed and before it called the provider at all.
+    provider_create_fenced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Monotonic record that one receipt search returned multiple exact remote
+    # Orders. Later empty/single results are weaker evidence and cannot erase
+    # this fact or authorize automatic settlement/create.
+    provider_ambiguity_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     state: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_reason_code: Mapped[str | None] = mapped_column(String(40), nullable=True)

@@ -21,10 +21,11 @@ Secrets are loaded through PACTRA settings, retained only in private
 attributes, omitted from repr/audit/API output, and used solely for HTTP Basic
 Auth or webhook HMAC verification. Live keys are structurally refused.
 
-At-most-one remote Order additionally depends on Razorpay's merchant setting
-"reject orders with duplicate receipts". Provider construction requires an
-operator acknowledgement that this setting is enabled; PACTRA cannot configure
-or independently verify that dashboard setting.
+Razorpay TEST evidence shows that repeated creates may accept the same receipt.
+Receipt lookup is therefore reconciliation evidence, not provider-side
+idempotency. PACTRA's executor durably consumes create permission before its
+first receipt lookup; only that fence winner may make the one allowed create,
+and later invocations can only search/reconcile.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from packages.schemas.payment import (
 )
 
 from services.payment_executor.providers.base import (
+    ProviderAmbiguity,
     ProviderTerminalError,
     ProviderTimeout,
     ProviderTransientError,
@@ -90,6 +92,7 @@ class RazorpayTestPaymentProvider:
     """Razorpay Orders/Payments adapter restricted to test credentials."""
 
     name = PROVIDER_NAME
+    create_retries_are_idempotent = False
 
     def __init__(
         self,
@@ -97,7 +100,6 @@ class RazorpayTestPaymentProvider:
         key_id: str,
         key_secret: str,
         webhook_secret: str,
-        duplicate_receipt_rejection_enabled: bool = False,
         http_client: Any = None,
         connect_timeout_seconds: float = 3.0,
         read_timeout_seconds: float = 7.0,
@@ -109,13 +111,6 @@ class RazorpayTestPaymentProvider:
             key_id.startswith(TEST_KEY_PREFIX) and key_id != "rzp_test_REPLACE_ME",
             "razorpay.test_mode_only",
             "RAZORPAY_KEY_ID must be a configured Razorpay TEST key; live keys are refused",
-        )
-        require(
-            duplicate_receipt_rejection_enabled is True,
-            "razorpay.duplicate_receipt_rejection_acknowledged",
-            "RAZORPAY_DUPLICATE_RECEIPT_REJECTION_ENABLED=true must acknowledge that "
-            "'reject orders with duplicate receipts' is enabled in the Razorpay dashboard; "
-            "PACTRA does not configure this provider setting",
         )
         require(
             _is_configured_secret(key_secret),
@@ -405,7 +400,44 @@ class RazorpayTestPaymentProvider:
         else:
             assert idempotency_key is not None
             receipt = receipt_for_idempotency_key(idempotency_key)
-            response = await self._request("GET", "/orders", params={"receipt": receipt})
+            exact = await self._orders_with_exact_receipt(receipt)
+            if not exact:
+                return None
+            if len(exact) > 1:
+                raise ProviderAmbiguity(
+                    self.name,
+                    f"{len(exact)} Razorpay Orders share one PACTRA receipt; refusing ambiguity",
+                )
+            try:
+                payment = self._order_to_payment(exact[0], expected_idempotency_key=idempotency_key)
+            except ValueError as exc:
+                raise ProviderTransientError(
+                    self.name, f"malformed Order search response: {exc}"
+                ) from exc
+
+        if payment.status is ProviderPaymentStatus.SUCCEEDED:
+            return await self._attach_captured_payment(payment)
+        return payment
+
+    async def _orders_with_exact_receipt(self, receipt: str) -> list[dict[str, Any]]:
+        """Exhaust Razorpay's receipt-filtered pages before deciding 0/1/many.
+
+        The filter is documented as a contains-match and pages default to ten,
+        so each returned receipt is compared exactly and pagination is explicit.
+        A full final page at the safety bound is unresolved rather than silently
+        treated as exhaustive.
+        """
+        page_size = 100
+        max_pages = 100
+        exact_by_id: dict[str, dict[str, Any]] = {}
+
+        for page_number in range(max_pages):
+            skip = page_number * page_size
+            response = await self._request(
+                "GET",
+                "/orders",
+                params={"receipt": receipt, "count": page_size, "skip": skip},
+            )
             try:
                 status_code = self._status_code(response)
             except ValueError as exc:
@@ -421,30 +453,30 @@ class RazorpayTestPaymentProvider:
                 items = parsed.get("items")
                 if not isinstance(items, list):
                     raise ValueError("orders collection has no items list")
-                exact = [
-                    item
-                    for item in items
-                    if isinstance(item, dict) and item.get("receipt") == receipt
-                ]
-                if not exact:
-                    return None
-                if len(exact) > 1:
-                    raise ProviderTransientError(
-                        self.name,
-                        f"{len(exact)} Razorpay Orders share one PACTRA receipt; "
-                        "refusing ambiguity",
-                    )
-                payment = self._order_to_payment(exact[0], expected_idempotency_key=idempotency_key)
-            except ProviderTransientError:
-                raise
+                if len(items) > page_size:
+                    raise ValueError("orders collection exceeds requested page size")
+                for item in items:
+                    if not isinstance(item, dict) or item.get("receipt") != receipt:
+                        continue
+                    order_id = item.get("id")
+                    if not isinstance(order_id, str) or not order_id:
+                        raise ValueError("matching order id is missing or malformed")
+                    previous = exact_by_id.setdefault(order_id, item)
+                    if previous != item:
+                        raise ValueError("matching order changed across search pages")
             except ValueError as exc:
                 raise ProviderTransientError(
                     self.name, f"malformed Order search response: {exc}"
                 ) from exc
 
-        if payment.status is ProviderPaymentStatus.SUCCEEDED:
-            return await self._attach_captured_payment(payment)
-        return payment
+            if len(items) < page_size:
+                return list(exact_by_id.values())
+
+        raise ProviderAmbiguity(
+            self.name,
+            "Razorpay Order receipt search exceeded the safe pagination bound; "
+            "refusing to assume a unique match",
+        )
 
     def verify_webhook(
         self,
@@ -600,7 +632,6 @@ def from_environment(http_client: Any = None) -> RazorpayTestPaymentProvider:
         key_id=settings.razorpay_key_id,
         key_secret=settings.razorpay_key_secret.get_secret_value(),
         webhook_secret=settings.razorpay_webhook_secret.get_secret_value(),
-        duplicate_receipt_rejection_enabled=(settings.razorpay_duplicate_receipt_rejection_enabled),
         http_client=http_client,
         connect_timeout_seconds=settings.razorpay_connect_timeout_seconds,
         read_timeout_seconds=settings.razorpay_read_timeout_seconds,

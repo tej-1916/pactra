@@ -40,6 +40,8 @@ class NonIdempotentFakePaymentProvider(FakePaymentProvider):
     blind second create.
     """
 
+    create_retries_are_idempotent = False
+
     def __init__(self) -> None:
         super().__init__()
         self.all_created_payments: list[ProviderPayment] = []
@@ -223,7 +225,12 @@ async def test_rolled_back_success_is_safe_without_provider_create_idempotency(s
         await crashing.rollback()
 
     original = provider.all_created_payments[0]
-    await drain(sessionmaker, provider=provider, max_events=8)
+    await drain(
+        sessionmaker,
+        provider=provider,
+        max_events=8,
+        now=utcnow() + timedelta(seconds=45),
+    )
 
     intent = await _intent(sessionmaker, intent_id)
     assert intent.state == PaymentIntentState.SUCCEEDED.value

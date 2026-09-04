@@ -22,16 +22,17 @@ WHY A RAIL IS NOT A TRANSLATING ADAPTER
     REFUSES ``AdapterFamily.PAYMENT_RAIL`` with that reason attached.
 
 THE CONTRACT, RESTATED SO THE FAMILY DEFINITION IS COMPLETE
-    ``create_payment``    idempotency-keyed creation, or the existing payment
+    ``create_payment``    creation under the adapter's declared retry contract
     ``get_payment``       lookup by provider id OR by idempotency key — the only
                           handle left after a create whose response was lost
     ``verify_webhook``    MAC over the RAW bytes, constant-time, before parsing
 
     And the error taxonomy that carries the reliability guarantee:
     ``ProviderTimeout`` is UNCERTAINTY, not failure; ``ProviderTransientError``
-    means no payment was created; ``ProviderTerminalError`` means a definitive
-    refusal; ``ProviderPaymentMismatch`` means a 200 response that does not
-    describe this intent and must never be linked or settled.
+    never grants non-idempotent create permission; ``ProviderTerminalError``
+    means a definitive refusal; ``ProviderPaymentMismatch`` means a 200
+    response that does not describe this intent and must never be linked or
+    settled.
 
 WHAT ARRIVES FROM A RAIL IS UNTRUSTED
     Provider responses are untrusted input even at HTTP 200, and the executor

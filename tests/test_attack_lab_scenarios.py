@@ -169,14 +169,15 @@ async def test_every_bound_field_mutation_is_refused():
 # Harness self-test: the critical scenario CAN fail
 # --------------------------------------------------------------------------- #
 class _LyingProvider(NonIdempotentProvider):
-    """Records a payment, then denies holding it.
+    """Falsely declares idempotent create, then denies holding a payment.
 
-    Models the one thing reconciliation cannot defend against: a provider that
-    answers "I hold nothing for that key" while holding one. PACTRA treats a
-    positively-empty answer as evidence that re-creating is safe — correctly,
-    since no timer is evidence about whether money moved — so a lying provider
-    induces a genuine duplicate. See KL-06.
+    This mutation corrupts both inputs to the retry decision: the adapter claims
+    repeated creates are safe and its lookup denies the existing payment. That
+    must make the attack scenario detect a duplicate; otherwise its BLOCKED
+    result for the real, correctly fenced adapter would be unfalsifiable.
     """
+
+    create_retries_are_idempotent = True
 
     async def get_payment(self, *, provider_payment_id=None, idempotency_key=None):
         self.get_calls.append((provider_payment_id, idempotency_key))
@@ -186,10 +187,10 @@ class _LyingProvider(NonIdempotentProvider):
 async def test_the_timeout_scenario_detects_a_real_duplicate():
     """A check that cannot fail is not a check.
 
-    This is the mutation test for the harness itself. With a provider that lies
-    about what it holds, a second payment genuinely IS created — and the
-    scenario must report NOT_BLOCKED. Without this, the BLOCKED it reports for
-    real PACTRA would be unfalsifiable.
+    This is the mutation test for the harness itself. With an adapter that lies
+    about both create idempotency and what it holds, a second payment genuinely
+    IS created and the scenario must report NOT_BLOCKED. Without this, the
+    BLOCKED result for real PACTRA would be unfalsifiable.
     """
 
     async def lying_setup(context: Any) -> dict[str, Any]:

@@ -24,7 +24,10 @@ P = PaymentIntentState
 
 ALLOWED_PAYMENT_TRANSITIONS: dict[PaymentIntentState, frozenset[PaymentIntentState]] = {
     P.CREATED: frozenset({P.QUEUED, P.CANCELLED}),
-    P.QUEUED: frozenset({P.PROCESSING, P.CANCELLED}),
+    # QUEUED -> PROVIDER_PENDING covers pre-create lookup uncertainty and
+    # durable-fence recovery. In the latter case permission may have been
+    # consumed even though no HTTP-attempt fact committed.
+    P.QUEUED: frozenset({P.PROCESSING, P.PROVIDER_PENDING, P.CANCELLED}),
     # A provider call ends in exactly one of: success, uncertainty, a failure we
     # may retry, or a failure we may not.
     P.PROCESSING: frozenset(
@@ -38,8 +41,8 @@ ALLOWED_PAYMENT_TRANSITIONS: dict[PaymentIntentState, frozenset[PaymentIntentSta
     # The uncertain state. It may only be left by RECONCILIATION or by a
     # VERIFIED webhook — never by optimistically assuming an outcome.
     # FAILED_RETRYABLE is reachable only once reconciliation has established
-    # that the provider holds no payment for this idempotency key, which is the
-    # single condition under which re-creating one is not a duplicate risk.
+    # that an idempotent-create provider holds no payment for this key. A
+    # fenced provider never takes that edge, even after an empty lookup.
     P.PROVIDER_PENDING: frozenset(
         {
             P.SUCCEEDED,
@@ -47,7 +50,9 @@ ALLOWED_PAYMENT_TRANSITIONS: dict[PaymentIntentState, frozenset[PaymentIntentSta
             P.FAILED_RETRYABLE,
         }
     ),
-    P.FAILED_RETRYABLE: frozenset({P.QUEUED, P.FAILED_TERMINAL, P.CANCELLED}),
+    # FAILED_RETRYABLE -> PROVIDER_PENDING closes upgraded legacy Razorpay rows
+    # whose durable outbox history is conservatively fenced by migration 0009.
+    P.FAILED_RETRYABLE: frozenset({P.QUEUED, P.PROVIDER_PENDING, P.FAILED_TERMINAL, P.CANCELLED}),
     # Terminal: absorbing by construction.
     P.SUCCEEDED: frozenset(),
     P.FAILED_TERMINAL: frozenset(),

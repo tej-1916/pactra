@@ -148,7 +148,7 @@ async def test_a_pending_payment_converges_once_the_provider_settles(sessionmake
 
 
 # --------------------------------------------------------------------------- #
-# Provider says NOT FOUND — the only answer that licenses a retry
+# Idempotent-create provider says NOT FOUND — its contract licenses a retry
 # --------------------------------------------------------------------------- #
 async def test_not_found_makes_the_payment_retryable(sessionmaker):
     provider, mission_id, intent_id = await _uncertain(

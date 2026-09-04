@@ -34,8 +34,12 @@ from packages.schemas.capability import (
 )
 from packages.schemas.domain import EventType
 from packages.schemas.payment import (
+    OutboxEventType,
     OutboxStatus,
     PaymentIntentState,
+    PaymentRequest,
+    ProviderPayment,
+    ProviderPaymentStatus,
     WebhookEventType,
 )
 from services.audit_ledger.ledger import append_event, list_events
@@ -46,7 +50,7 @@ from services.payment_executor.intents import (
     create_payment_intent,
     find_by_idempotency_key,
 )
-from services.payment_executor.outbox import claim_next_event
+from services.payment_executor.outbox import claim_next_event, enqueue_outbox_event
 from services.payment_executor.providers.fake import (
     FakePaymentProvider,
     FaultMode,
@@ -459,6 +463,81 @@ async def test_pg_concurrent_workers_produce_one_provider_payment(pg_sessionmake
     )
     assert provider.payment_count_for(key) == 1
     assert len(provider.created_payments) == 1
+
+
+async def test_pg_concurrent_razorpay_create_events_consume_one_fence(
+    pg_sessionmaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Even duplicate durable events can cross the non-idempotent boundary once."""
+
+    class DuplicatePermittingProvider(FakePaymentProvider):
+        name = "razorpay_test"
+        create_retries_are_idempotent = False
+
+        async def get_payment(self, **kwargs):
+            self.get_calls.append(
+                (kwargs.get("provider_payment_id"), kwargs.get("idempotency_key"))
+            )
+            # Model Razorpay search lag even after create.
+            return None
+
+        async def create_payment(self, request: PaymentRequest) -> ProviderPayment:
+            self.create_calls.append(request.idempotency_key)
+            await asyncio.sleep(0.01)
+            return ProviderPayment(
+                provider=self.name,
+                provider_payment_id=f"order_{len(self.create_calls)}",
+                provider_order_id=f"order_{len(self.create_calls)}",
+                status=ProviderPaymentStatus.CREATED,
+                amount_inr=request.amount_inr,
+                currency=request.currency,
+                idempotency_key=request.idempotency_key,
+            )
+
+    from services.payment_executor import executor
+
+    actual_acquire = executor.acquire_provider_create_fence
+    fence_winners: list[bool] = []
+
+    async def tracked_acquire(*args, **kwargs) -> bool:
+        acquired = await actual_acquire(*args, **kwargs)
+        fence_winners.append(acquired)
+        return acquired
+
+    monkeypatch.setattr(executor, "acquire_provider_create_fence", tracked_acquire)
+
+    key = "idem-pg-razorpay-fence-workers"
+    mission_id, authorization_id = await _authorized(pg_sessionmaker)
+    async with pg_sessionmaker() as setup:
+        result = await create_payment_intent(
+            setup,
+            capabilities=EXECUTOR,
+            mission_id=mission_id,
+            authorization_id=authorization_id,
+            idempotency_key=key,
+            provider="razorpay_test",
+        )
+        await enqueue_outbox_event(
+            setup,
+            payment_intent_id=result.intent.id,
+            event_type=OutboxEventType.PAYMENT_CREATE_REQUESTED,
+            payload={"idempotency_key": key},
+        )
+        await setup.commit()
+
+    provider = DuplicatePermittingProvider()
+    await asyncio.gather(
+        drain(pg_sessionmaker, provider=provider, worker_id="rzp-w1", max_events=2),
+        drain(pg_sessionmaker, provider=provider, worker_id="rzp-w2", max_events=2),
+    )
+
+    assert len(provider.create_calls) <= 1
+    assert set(provider.create_calls) <= {key}
+    assert fence_winners == [True]
+    async with pg_sessionmaker() as check:
+        intent = await find_by_idempotency_key(check, key)
+        assert intent is not None
+        assert intent.provider_create_fenced_at is not None
 
 
 async def test_pg_rollback_also_rolls_back_authorization_consumption(pg_sessionmaker):

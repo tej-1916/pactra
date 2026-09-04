@@ -84,14 +84,14 @@ PROTOCOL_SUPPORT: tuple[ProtocolSupport, ...] = (
         ),
         not_supported=(
             "An Order is not a Payment: a completed payment needs a Checkout front end, "
-            "which does not exist. Razorpay does not document receipt uniqueness, so no "
-            "provider-side idempotency is claimed — duplicate prevention rests on "
-            "PACTRA's own UNIQUE(idempotency_key) and the PROVIDER_PENDING path. The "
-            "HTTP paths have never been exercised against the live Razorpay API."
+            "which does not exist. Real Razorpay TEST API evidence accepted duplicate "
+            "receipts, so no provider-side receipt idempotency is claimed. Duplicate "
+            "prevention rests on PACTRA's own UNIQUE(idempotency_key), durable create "
+            "fence, monotonic ambiguity marker, and PROVIDER_PENDING reconciliation path."
         ),
         reason=(
-            "Implemented and tested offline in Phase 4; three stated gaps keep it PARTIAL. "
-            "Phase 8 changes none of it."
+            "The test-mode adapter is implemented, but absence of Checkout and live-mode "
+            "support keeps the integration PARTIAL."
         ),
     ),
     ProtocolSupport(

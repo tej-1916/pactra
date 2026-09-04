@@ -239,6 +239,39 @@ async def handle_webhook(
     # ---- 4. Apply ONLY what the state machine permits. ----------------------
     current = PaymentIntentState(intent.state)
 
+    if intent.provider_ambiguity_observed_at is not None:
+        # A verified webhook about one linked Order does not prove that the
+        # other exact-receipt Order previously observed is harmless. Preserve
+        # the ambiguity and require operator resolution instead of claiming a
+        # clean settlement from weaker one-Order evidence.
+        intent.last_reason_code = ReasonCode.PROVIDER_AMBIGUITY.value
+        await append_event(
+            session,
+            mission_id=intent.mission_id,
+            event_type=EventType.PAYMENT_PROVIDER_UNCERTAIN,
+            actor=ACTOR,
+            payload={
+                "payment_intent_id": str(intent.id),
+                "state": current.value,
+                "provider": event.provider,
+                "provider_event_id": event.provider_event_id,
+                "provider_ambiguity_observed": True,
+                "webhook_applied": False,
+                "manual_recovery_required": True,
+                "reason_code": ReasonCode.PROVIDER_AMBIGUITY.value,
+            },
+        )
+        stored_event.processed_at = moment
+        stored_event.applied_state = None
+        await session.flush()
+        return WebhookOutcome(
+            accepted=True,
+            applied=False,
+            reason_code=ReasonCode.PROVIDER_AMBIGUITY.value,
+            state=current,
+            payment_intent_id=intent.id,
+        )
+
     if current == target or is_terminal(current) or not can_transition(current, target):
         if current == target and current is PaymentIntentState.PROVIDER_PENDING:
             # payment.authorized and payment.failed are observations about the

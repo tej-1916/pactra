@@ -181,6 +181,40 @@ async def test_a_valid_webhook_settles_the_payment(sessionmaker):
     assert EventType.PAYMENT_SUCCEEDED.value in types
 
 
+async def test_known_provider_ambiguity_blocks_later_single_payment_webhook(sessionmaker):
+    from apps.api.db.models import PaymentIntentRow
+    from packages.schemas.domain import utcnow
+
+    provider, _, intent_id, provider_payment_id = await _paid(
+        sessionmaker, "idem-ambiguous-webhook"
+    )
+    async with sessionmaker() as setup:
+        intent = await setup.get(PaymentIntentRow, intent_id, populate_existing=True)
+        assert intent is not None
+        intent.provider_ambiguity_observed_at = utcnow()
+        intent.last_reason_code = "PROVIDER_AMBIGUITY"
+        await setup.commit()
+
+    body = webhook_body(
+        event_id="evt-ambiguous-single",
+        event_type=WebhookEventType.PAYMENT_SUCCEEDED,
+        provider_payment_id=provider_payment_id,
+    )
+    async with sessionmaker() as work:
+        outcome = await handle_webhook(
+            work,
+            provider=provider,
+            body=body,
+            signature=provider.sign(body),
+        )
+        await work.commit()
+
+    assert outcome.accepted is True
+    assert outcome.applied is False
+    assert outcome.reason_code == "PROVIDER_AMBIGUITY"
+    assert await _state(sessionmaker, intent_id) == PaymentIntentState.PROVIDER_PENDING.value
+
+
 async def test_no_secret_or_signature_is_written_to_the_audit_trail(sessionmaker):
     provider, mission_id, _, provider_payment_id = await _paid(sessionmaker, "idem-nosecret")
     body = webhook_body(
