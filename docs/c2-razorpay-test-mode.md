@@ -4,6 +4,37 @@ PACTRA uses Razorpay **test mode only**. A key whose id does not begin with
 `rzp_test_` is refused before a provider object can be constructed. Placeholder
 or missing key, API secret, and webhook secret values also fail closed.
 
+## Verified evidence
+
+A real Razorpay **TEST** Order was created through the payment executor:
+
+```text
+Razorpay Order id                       order_TY3cA0B9NrAM4B
+amount                                  ₹4,299  =  429900 paise
+currency                                INR
+Razorpay Order status observed          created
+PACTRA payment state                    PROVIDER_PENDING
+exact remote receipt matches observed   1
+durable provider-create fence           set
+provider ambiguity marker               null
+restart proof                           zero second POST /v1/orders
+```
+
+Over that same mission: 22 audit events, `AUDIT_VALID`, `REPLAY_OK` with
+`trusted = true`, replayed and persisted states matching, a Decision Trace of
+`ADMIT → BIND → EXECUTE`, an `AUTHORITY_ESCALATION` attempt refused, and an
+authorization scheme of `USER_ED25519`. Migration head at that run was
+`0010_provider_ambiguity`; **no pre-migration backup existed**, and the verified
+backup was taken after the migration and before runtime.
+
+**This proves a real Razorpay TEST Order was created, exactly once, and that a
+restart did not produce a second create.**
+
+**It does NOT prove** paid, captured, or settled; no customer completed
+Checkout, and no provider webhook was delivered. An Order is not a Payment.
+
+Full record: [`evidence.md`](evidence.md).
+
 ## Honest execution boundary
 
 The automated backend step is:
@@ -49,15 +80,27 @@ not-found. Once any provider Order id has been durably linked, even a later
 not-found response cannot license a replacement Order; the intent remains
 uncertain until reconciliation succeeds or is dead-lettered for review.
 
-Real Razorpay TEST API evidence accepted two consecutive Order creates with the
-same amount, currency, receipt, and notes. PACTRA therefore does not claim that
-Razorpay enforces receipt uniqueness and does not depend on a dashboard setting.
+**The correction that shaped this design.** Real Razorpay TEST API evidence
+accepted two consecutive Order creates with the same amount, currency, receipt,
+and notes. PACTRA therefore does **not** claim that Razorpay rejects duplicate
+receipts, does **not** treat receipt uniqueness as an idempotence mechanism,
+does **not** depend on any dashboard setting or acknowledgement flag, and does
+**not** treat provider duplicate-receipt behaviour as a safety guarantee.
+Everything that makes duplicate payment impossible is enforced locally, below.
 
-The guarantee is enforced locally in two layers:
+The current safety design, in full:
 
-- `UNIQUE(payment_intents.idempotency_key)` permits one logical PACTRA payment;
-- `payment_intents.provider_create_fenced_at` permanently consumes permission
-  to make the initial Razorpay create before the POST can occur.
+1. `UNIQUE(payment_intents.idempotency_key)` permits one logical PACTRA payment.
+2. There is **exactly one automatic initial-create permission**, and
+   `payment_intents.provider_create_fenced_at` permanently consumes it before
+   the POST can occur — a durable one-way fence.
+3. **Exhaustive deterministic receipt reconciliation** runs across every
+   relevant Orders page before a create can be considered.
+4. `provider_ambiguity_observed_at` is a **durable, monotonic ambiguity marker**
+   that later weaker evidence cannot erase.
+5. Restart and crash recovery perform **reconciliation only**, after fence
+   consumption. There is **no blind replacement create** after ambiguity or a
+   crash.
 
 The fence is deliberately conservative. It proves only that PACTRA consumed
 create permission. It does **not** prove that a POST was dispatched or reached

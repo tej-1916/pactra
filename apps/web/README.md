@@ -1,10 +1,12 @@
 # PACTRA Console
 
-**Adversarial Transaction Security for Agentic Commerce.**
-AI proposes. PACTRA decides what can move money.
+**PACTRA — Deterministic Transaction Verification for Agentic Commerce.**
+AI decides what it wants to do. PACTRA decides what it is allowed to do.
 
-The operations console for the PACTRA security kernel. Next.js 16 · React 19 ·
-TypeScript · Tailwind v4 · Vitest.
+The read-only operations console for the PACTRA verification layer. Next.js 16 ·
+React 19 · TypeScript · Tailwind v4 · Vitest.
+
+Project overview and reviewer summary: [`../../README.md`](../../README.md).
 
 ## Running it
 
@@ -38,8 +40,9 @@ the other is not trustworthy.
 | **Generated** | Backend source, exported by `scripts/export_reference.py` | `GENERATED FROM SOURCE` |
 | **Development benchmark** | A recorded harness run read from `reports/` | `LAST VERIFIED DEVELOPMENT BENCHMARK` |
 
-Nothing is hardcoded. There is no component containing `130/130 attacks blocked`
-or `1272 tests`.
+Nothing is hardcoded. There is no component containing a literal block rate, run
+count, or test count: every such number is read from the API, from the generated
+export, or from a recorded report at render time.
 
 ### Regenerating the reference export
 
@@ -55,6 +58,12 @@ npm run export-reference      # writes src/data/*.generated.json
 
 Run it after any change to the support matrix, the limitation registers, the
 payment state machine, or the shared enums.
+
+The generated files **are tracked in git**. That is deliberate: it is what lets a
+fresh clone typecheck, test and build the console without a Python environment,
+and the fresh-clone reproduction is part of the release evidence. Reports under
+`reports/` stay gitignored, because a recorded benchmark is a measurement of one
+machine at one moment and must not ship as if it were current.
 
 ### Producing a benchmark
 
@@ -87,7 +96,7 @@ should never be one: a value that reaches the browser is public.
 
 ```text
 src/
-├── app/                  8 routes + the /api/pactra proxy
+├── app/                  10 page routes + the /api/pactra proxy
 ├── components/
 │   ├── ui/               design-system primitives (badges, panels, states)
 │   ├── shell/            sidebar, brand, live API status
@@ -122,11 +131,16 @@ npm test
 npm run build
 ```
 
+All four pass on the submission release, along with a fresh-clone reproduction.
+Two non-blocking Turbopack filesystem-tracing warnings remain in the production
+build; they are reported rather than suppressed. The consolidated verification
+record is in [`../../docs/evidence.md`](../../docs/evidence.md).
+
 ## What the console will not do
 
 * Execute attacks, or simulate executing them.
 * Mutate an audit event to demonstrate that tampering is detected.
-* Invent a backend endpoint. Where one is missing the UI says so — see
-  `FRONTEND_BACKEND_GAP` in the Phase 9 report.
+* Invent a backend endpoint. Where one is missing the UI says so in place —
+  grep the source for `FRONTEND_BACKEND_GAP`.
 * Present a browser-local mission list as a system inventory.
 * Render an unreachable backend as zero.

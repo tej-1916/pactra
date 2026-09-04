@@ -1,10 +1,39 @@
 # PACTRA Architecture Notes (v2)
 
-PACTRA is a **zero-trust adversarial transaction control plane** between
-autonomous AI agents and payment infrastructure. The design assumption is that
-the reasoning layer, merchant input, or a participating agent may be compromised;
-transaction invariants must hold regardless. The LLM is never the security
-boundary.
+**PACTRA — Deterministic Transaction Verification for Agentic Commerce**
+Expansion: *Policy-Aware Commerce Threat & Risk Architecture*
+
+PACTRA is a **deterministic verification layer** between autonomous AI agents
+and payment infrastructure. The design assumption is that the reasoning layer,
+merchant input, or a participating agent may be compromised; transaction
+invariants must hold regardless. The LLM is never the security boundary.
+
+```text
+AI decides what it WANTS to do.
+PACTRA decides what it is ALLOWED to do.
+Payment infrastructure EXECUTES the approved action reliably.
+```
+
+## The pipeline: ADMIT → BIND → EXECUTE
+
+Everything below fits into three stages, and only three:
+
+```text
+ADMIT     provenance · taint · authority lattice · schema/invariant validation
+          · capability firewall · deterministic policy · advisory risk
+BIND      transaction binding · authorization artifact · approval proof
+          · replay protection
+EXECUTE   idempotency · durable intent · transactional outbox · provider
+          dispatch · reconciliation · verified webhooks
+```
+
+**Audit and replay are downstream evidence, not a fourth stage.** They observe
+what ADMIT / BIND / EXECUTE recorded; they grant no authority and repair no
+state. The frozen Decision Trace stage enum is exactly `ADMIT | BIND | EXECUTE`
+— see [`c1-trust-contract.md`](c1-trust-contract.md).
+
+The consolidated verification record for the release is in
+[`evidence.md`](evidence.md).
 
 ## Trust boundaries
 
@@ -130,16 +159,20 @@ destination, transaction policy, or approval state.
 ## Kernel pipeline
 
 ```text
-Provenance Engine → Taint Tracking → Authority Lattice
-→ Schema / Invariant Validator → Capability Firewall
-→ Deterministic Policy Engine → Risk / Anomaly Engine (advisory)
-→ Transaction Binding → Authorization / Human Approval
-→ Replay Protection → Idempotency / Payment Reliability
-→ Tamper-Evident Audit / Replay
+ADMIT    Provenance Engine → Taint Tracking → Authority Lattice
+         → Schema / Invariant Validator → Capability Firewall
+         → Deterministic Policy Engine → Risk / Anomaly Engine (advisory)
+BIND     → Transaction Binding → Authorization / Approval Proof
+         → Replay Protection
+EXECUTE  → Idempotency / Payment Reliability → Provider Dispatch
+
+evidence   Tamper-Evident Audit → Verification → Deterministic Replay
 ```
 
 Each stage is deterministic. The LLM feeds proposals into the top; nothing
-downstream trusts it.
+downstream trusts it. The audit/verify/replay row is deliberately drawn apart:
+it records and reconstructs what the three stages did, and is never itself a
+stage that can permit anything.
 
 The Risk / Anomaly stage is the one stage that decides nothing. It is drawn in
 the pipeline because that is where it reads from, not because anything waits on
@@ -623,9 +656,18 @@ evaluation: N iterations × M scenarios → AttackRunReport
 metrics (measured) + text/JSON report + CLI exit code
 ```
 
-`services/attack_lab/` runs 47 registered scenarios — 36 malicious, 10 benign
-controls, 1 demonstrated known limitation — through the REAL kernel. Nothing
+`services/attack_lab/` runs **67 registered scenarios** through the REAL kernel:
+53 malicious, 13 benign controls, and 1 demonstrated known limitation. Nothing
 here is a stub that returns `blocked=True`.
+
+The original Phase 6 set — 47 scenarios, 36 malicious, 10 controls, 1 known
+limitation — remains PINNED BY ID as the canonical Phase 6 baseline
+(`--phase6-baseline`), so the later Phase 8 adapter scenarios and signed-approval
+scenarios cannot silently move its denominators.
+
+The lab is an **authored adversarial regression harness**: it proves the
+scenarios its author wrote are refused, reproducibly. It is not certification
+and not independent red-teaming.
 
 ### The lab constructs hostile inputs; it never relaxes a control
 
@@ -687,10 +729,12 @@ have produced a confident wrong answer:
 
 ### Benign controls, and why FP/FN needs them
 
-A kernel that denied every request would score a perfect block rate. Ten benign
+A kernel that denied every request would score a perfect block rate. Benign
 controls run the same real paths with `expected_status = NOT_BLOCKED`, so a
 control that comes back BLOCKED is counted as a false positive rather than
 quietly re-labelled. Without them there is no honest false-positive rate at all.
+Phase 6 declared ten; Phase 8 added three benign adapter controls, so the full
+suite runs thirteen.
 
 ### Metric definitions
 
@@ -1250,3 +1294,30 @@ stays partial/test-mode with every Phase 4 limitation unchanged.
 Lower layers can never override higher layers. Hard limits, authorization, and
 policy configuration are authoritative; agent proposals and merchant data are
 not.
+
+## Implementation status, at a glance
+
+| Component | Status |
+|---|---|
+| Deterministic policy, provenance, taint, authority lattice, capability firewall | implemented |
+| Transaction binding + server-issued authorization + replay protection | implemented |
+| Local Ed25519 approval proof (`USER_ED25519`, one pre-enrolled demo key) | implemented, demo-scoped |
+| Payment reliability: durable intent, transactional outbox, separate worker | implemented |
+| Tamper-evident audit ledger, verification, deterministic replay, Decision Trace | implemented |
+| Adversarial Attack Lab (67 scenarios) + evaluation harness | implemented |
+| Advisory risk / anomaly engine | implemented, advisory only |
+| Protocol adapter families + sealed registry + support matrix | implemented |
+| Operations console (Next.js, read-only) | implemented |
+| Razorpay | **PARTIAL** — TEST mode only; Orders API + webhook verification; no Checkout front end, no live-mode validation |
+| MCP | **PARTIAL** — `tools/call` request-shape translation for three closed revisions; no server, no transport, no lifecycle |
+| AP2 | **PLANNED** — generic family exists; no AP2 schema or adapter |
+| x402 | **PLANNED** — no code, no compatibility claim |
+| ACP | **PLANNED** — no code, no compatibility claim |
+| Cryptographic merchant authentication | **not implemented** |
+| External audit anchoring | **not implemented** |
+| Production user identity, WebAuthn, passkeys, key rotation/recovery | **not implemented** |
+| Machine learning in the risk path | deliberately **not added** (`ML_ADDED: NO`) |
+
+The machine-readable source of truth for the protocol rows is
+`services/adapters/support.py`; tests hold this table, the README table, and both
+registries to it.

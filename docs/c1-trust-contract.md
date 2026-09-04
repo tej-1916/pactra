@@ -1,11 +1,23 @@
 # C1 trust contract and Decision Trace freeze
 
+**PACTRA — Deterministic Transaction Verification for Agentic Commerce**
+
 Status: frozen at C1. Changes to the schemas, enum values, stage mappings,
 ordering, or endpoint documented here are contract-breaking and require
 explicit approval.
 
 PACTRA remains an `ADMIT -> BIND -> EXECUTE` system. The model may select; the
-model may not mint authority. The AI is never the security boundary.
+model may not mint authority. The AI is never the security boundary. **LLM
+output is never authorization; merchant content is never system authority.**
+
+There are exactly three stages, and audit/verification/replay is **not** a
+fourth. Audit and replay are downstream *evidence*: they record and reconstruct
+what the three stages did, grant no authority, and repair no state. The `stage`
+enum below is closed at `ADMIT | BIND | EXECUTE` for that reason.
+
+The consolidated verification record for the release — including the real
+Razorpay TEST-mode evidence and the audit/replay results measured over it — is
+in [`evidence.md`](evidence.md).
 
 ## Trusted computing base
 
@@ -356,16 +368,23 @@ C1 adds no risk-engine feature work or primary navigation. A real
 - compromise of the full PACTRA TCB or its trusted registries/configuration;
 - cryptographic merchant authentication and authenticated structured offers;
 - deletion of the whole audit chain or an unanchored tail by a database
-  attacker (there is no independent external anchor);
+  attacker: the ledger is a per-mission hash chain and is **tamper-evident, not
+  immutable**. There is no immutable storage, no blockchain, no Merkle tree, and
+  no independent external anchor;
 - production user identity, identity proofing, and account recovery;
 - production signing-key enrollment, rotation, recovery, and revocation;
 - WebAuthn/passkeys;
-- independent red-team validation: the current suite is an authored synthetic
-  security regression/evaluation harness only;
+- independent red-team validation: the Attack Lab is an **authored adversarial
+  regression harness**, not certification. It proves its own scenarios are
+  refused, reproducibly, and says nothing about attacks nobody wrote;
 - deployed production multi-node or multi-region guarantees beyond the tested
   PostgreSQL locking/outbox primitives;
 - provider availability, settlement correctness, account security,
   idempotency, reconciliation truth, disputes, refunds, and other guarantees
   outside PACTRA's provider-adapter boundary;
 - real-money Razorpay execution: the current adapter is test-mode-only and
-  partial.
+  partial. A real Razorpay TEST Order was created; **paid, captured, settled,
+  customer Checkout completion, and provider webhook delivery were not**;
+- protocol coverage beyond what the machine-readable support matrix declares:
+  MCP is `PARTIAL` (request-shape translation only, no server or transport), and
+  AP2, x402 and ACP are `PLANNED` with no code and no compatibility claim.

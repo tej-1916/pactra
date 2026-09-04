@@ -1,52 +1,252 @@
-# PACTRA
+# PACTRA — Deterministic Transaction Verification for Agentic Commerce
 
-**PACTRA — Adversarial Transaction Security Kernel for Agentic Commerce**
 Expansion: *Policy-Aware Commerce Threat & Risk Architecture*
 Razorpay Buildathon — Track 01: AI Growth & Agentic Commerce
 
-PACTRA is a **zero-trust adversarial transaction control plane** between
-autonomous AI agents and payment infrastructure. It is built for the hard case:
-transaction safety must hold **even when the reasoning layer, merchant input, or
-one participating agent is compromised**.
-
-The frozen C1 trust boundary, limitations, approval-display rules, and Decision
-Trace contract are documented in [`docs/c1-trust-contract.md`](docs/c1-trust-contract.md).
+**Thesis:** agentic commerce can stay transaction-safe even when the reasoning
+layer, merchant input, or one participating agent is compromised — but only if a
+deterministic layer, not the model, decides what is allowed to move money.
 
 ```text
-THE AI MAY FAIL.        MERCHANT INPUT MAY BE MALICIOUS.
-THE AI MAY HALLUCINATE. AN AGENT MAY BE COMPROMISED.
-NETWORKS MAY FAIL.      MESSAGES MAY BE REPLAYED.
-BUT TRANSACTION INVARIANTS MUST STILL HOLD.
+AI decides what it WANTS to do.
+PACTRA decides what it is ACTUALLY ALLOWED to do.
+Payment infrastructure EXECUTES the approved action reliably.
 ```
 
-**The LLM is never the security boundary and never authorizes or moves money.**
+## The problem, and why it matters
 
-## Architecture — Adversarial Transaction Security Kernel
+An agent that can shop can also be talked into paying. The moment an agent is
+near a payment rail, three surfaces open at once: the **reasoning layer** can be
+persuaded or hallucinate a transaction nobody asked for; **merchant input** is
+untrusted text that gets treated as instruction, price, or policy; and **one
+compromised agent** in a multi-agent flow can propose — or re-propose — a
+payment. Ordinary distributed-systems reality compounds it: a timeout, retry, or
+crash turns one approved action into two provider calls, and the user pays twice.
+
+Prompt-level defences do not close this, because they ask the untrusted
+component to police itself. Agentic commerce moves authorization away from a
+human clicking a button; if nothing deterministic stands between the model and
+the rail, the security properties of a payment become the security properties of
+a prompt. PACTRA's position: the model may **select**, but it may never **mint
+authority**. **LLM output is never authorization. Merchant content is never
+system authority.**
+
+## Architecture — ADMIT → BIND → EXECUTE
 
 ```text
-USER → natural language → INTENT COMPILER → BUYER AGENT
-   → Merchant A / B / C   (UNTRUSTED INPUT)
+USER → natural language → BUYER AGENT → Merchant A / B / C  (UNTRUSTED INPUT)
    ↓
-┌───────────────── PACTRA SECURITY KERNEL ─────────────────┐
-│ Provenance → Taint → Authority Lattice                   │
-│   → Schema/Invariant Validator → Capability Firewall     │
-│   → Deterministic Policy → Risk/Anomaly (advisory)       │
-│   → Transaction Binding → Authorization/Approval          │
-│   → Replay Protection → Idempotency/Payment Reliability   │
-│   → Tamper-Evident Audit / Replay                         │
-└──────────────────────────────────────────────────────────┘
-   ↓
-PAYMENT EXECUTOR → RAZORPAY TEST MODE
+┌──────────── PACTRA DETERMINISTIC VERIFICATION LAYER ────────────┐
+│ ADMIT    Is this input allowed to exist as a proposal?          │
+│          provenance · taint · authority lattice · schema and    │
+│          invariant validation · capability firewall             │
+│          · deterministic policy · risk score (ADVISORY ONLY)    │
+│ BIND     Is this the exact transaction that was approved?       │
+│          nine-field transaction digest · server-issued          │
+│          authorization · Ed25519 approval proof · replay        │
+│          protection · one-time atomic consumption               │
+│ EXECUTE  Did exactly one payment happen, and can we prove it?   │
+│          durable intent · transactional outbox · separate       │
+│          worker · one-way provider create fence · exhaustive    │
+│          receipt reconciliation · signature-verified webhooks   │
+└─────────────────────────────────────────────────────────────────┘
+   ↓                                    ↓
+PAYMENT EXECUTOR → RAZORPAY TEST MODE   TAMPER-EVIDENT AUDIT → REPLAY
+                                        (evidence, never authority)
 ```
 
-Never `LLM → Razorpay`. Every stage is deterministic Python; the LLM only feeds
-proposals into the top of the kernel.
+There is no `LLM → Razorpay` edge. No route reaches a payment provider: the
+route commits a durable intent, and a **separate worker process** is the only
+thing that can call out. Audit and replay are **downstream evidence, not a
+fourth stage** — the frozen Decision Trace enum is exactly
+`ADMIT | BIND | EXECUTE`.
 
-> This is v2. It supersedes the v1 "Secure Multi-Agent Commerce & Payment
-> Gateway" direction, but **keeps** its still-valid requirements — deterministic
-> policy, human approval, Razorpay test mode, hash-chained audit, idempotency,
-> strict schemas, and testing — integrated into the adversarial design. See
-> `PACTRA_BUILD_SPEC.md` and `docs/architecture.md`.
+## What we actually proved
+
+Every number came out of an executed run. Nothing is estimated or hardcoded.
+
+```text
+backend        1364 tests passed  ·  ruff passed  ·  mypy passed
+frontend        355 tests passed  ·  typecheck, lint, production build passed
+
+Attack Lab     67 scenarios × 10 iterations = 670 runs
+               530 / 530  malicious runs BLOCKED
+               130 / 130  benign controls correctly ALLOWED
+               0 bypasses · 0 errors · 0 inconclusive · 0 findings
+               PostgreSQL concurrency exercised
+
+Razorpay TEST  real Order order_TY3cA0B9NrAM4B  ·  ₹4,299 = 429900 paise INR
+               Order status created  →  PACTRA state PROVIDER_PENDING
+               restart produced ZERO second Order-create POST
+
+Audit/replay   AUDIT_VALID  ·  REPLAY_OK, trusted = true
+               replayed and persisted states matched
+               Decision Trace: ADMIT → BIND → EXECUTE
+```
+
+**The Razorpay truth, stated exactly.** A real Razorpay **TEST** Order was
+created, exactly once, and a restart did not create a second one. PACTRA held
+`PROVIDER_PENDING`. This is **not** paid, **not** captured, **not** settled, and
+**no customer completed Checkout**. An Order is not a Payment.
+
+Full record, including per-category results and the exact reproduction commands:
+[`docs/evidence.md`](docs/evidence.md).
+
+## Core invariants
+
+```text
+LLM OUTPUT                         → NEVER AUTHORIZATION
+MERCHANT CONTENT                   → NEVER SYSTEM AUTHORITY
+NO VALID AUTHORIZATION             → NO PAYMENT
+TRANSACTION CHANGED AFTER APPROVAL → AUTHORIZATION INVALID
+SAME IDEMPOTENCY KEY               → AT MOST ONE LOGICAL PAYMENT
+AUDIT EVENT MODIFIED               → VERIFICATION FAILURE
+```
+
+## Reviewer quick start
+
+Nothing here touches real money or needs Razorpay credentials.
+
+```bash
+pip install -e ".[dev]"                              # 1. install
+make lint && make type-check && make test            # 2. ruff · mypy · 1364 tests
+make attack                                          # 3. adversarial harness (SQLite)
+docker compose -f infra/docker-compose.yml up -d     # 4. PostgreSQL
+make attack-full                                     # 5. 67 scenarios × 10 = 670 runs
+cd apps/web && npm install && npm test && npm run build   # 6. console: 355 tests
+```
+
+`make attack-full` writes `reports/attack-lab/run.json`. Reports are gitignored,
+so a fresh clone shows **RUNNER NOT CONNECTED** — the honest state, not a bug.
+The full API + signer + payment walkthrough is in
+[Walkthrough — the demo path](#walkthrough--the-demo-path) below.
+
+## What we do NOT claim
+
+* **Not a completed payment.** Razorpay TEST mode only, Order created, nothing
+  paid, captured, settled, or checked out; no webhook was delivered.
+* **Not verified human identity.** `USER_ED25519` is a **local cryptographic
+  demo approval proof** from one pre-enrolled demo key — no WebAuthn, no
+  passkeys, no hardware keys, no non-repudiation, no account system.
+* **Not immutable storage.** The audit ledger is a per-mission hash chain:
+  tamper-**evident**, not immutable. No blockchain, no Merkle tree, no external
+  anchor — so tail truncation and whole-chain deletion stay undetectable (KL-01).
+* **Risk scoring is advisory only** — a normalized index, never a fraud
+  probability, and it can never allow, deny, or gate a payment.
+* **The Attack Lab is an authored adversarial regression harness**, not
+  certification and not independent red-teaming. It proves its own scenarios are
+  refused, reproducibly; it says nothing about attacks nobody wrote.
+* **Merchant identity is registration-based, not cryptographic.**
+* **MCP is `PARTIAL`** (request-shape translation, no server or transport);
+  **AP2 / x402 / ACP are `PLANNED`** — no code, no compatibility claim.
+* **Razorpay does not enforce receipt uniqueness.** We measured it: the TEST API
+  accepted two Order creates with the same receipt. PACTRA never relied on it —
+  safety comes from a local durable one-way create fence, exhaustive receipt
+  reconciliation, and a monotonic ambiguity marker. See
+  [`docs/c2-razorpay-test-mode.md`](docs/c2-razorpay-test-mode.md).
+* No protection against compromise of PACTRA's own trusted computing base, and
+  no claim of semantic fidelity between natural language and structured intent.
+
+The full limitation registers (KL-01..KL-07, RL-01..RL-09) are
+[below](#full-limitation-registers) and are machine-readable in the code.
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | Trust boundaries, authority lattice, binding, audit, replay, risk, adapters |
+| [`docs/c1-trust-contract.md`](docs/c1-trust-contract.md) | Frozen trust boundary, TCB, taint rules, Decision Trace contract |
+| [`docs/c2-razorpay-test-mode.md`](docs/c2-razorpay-test-mode.md) | Razorpay TEST path, provider-state mapping, create fence, webhooks |
+| [`docs/evidence.md`](docs/evidence.md) | The consolidated verification record and its claim boundary |
+| [`apps/web/README.md`](apps/web/README.md) | The operations console, its three data tiers, colour semantics |
+
+---
+
+# Deep technical reference
+
+*Everything below is the full phase-by-phase engineering record: the mechanisms,
+the defects found while building them, and the limitations each phase left open.
+A reviewer who has read the summary above already has the project; this is the
+evidence behind it.*
+
+## Walkthrough — the demo path
+
+```bash
+docker compose -f infra/docker-compose.yml up -d
+cd apps/api && alembic upgrade head && cd ../..
+uvicorn apps.api.pactra.main:app --reload         # http://127.0.0.1:8000/docs
+```
+
+1. **ADMIT** — `POST /api/v1/missions` with a soft budget of ₹4,000 and a hard
+   limit of ₹4,500. The best valid offer is ₹4,299, so deterministic policy
+   returns `REQUIRE_APPROVAL` and the mission sits in `AWAITING_APPROVAL`. One
+   merchant embeds a prompt-injection string in its description; normalization
+   discards all free-form merchant text, so it never reaches policy.
+2. **Inspect the authorization** — `GET /api/v1/missions/{id}/authorization`.
+   The server-held nonce is never returned.
+3. **BIND** — approve with the external signer, which reconstructs and checks
+   the canonical challenge bytes locally and never transmits the private key:
+   ```bash
+   python scripts/pactra_demo_signer.py sign \
+     --private-key-path /path/outside/pactra/demo-approver.pem \
+     --signing-key-id demo-user-ed25519-v1 --mission-id "$MISSION" --submit
+   ```
+4. **EXECUTE** — `POST /api/v1/missions/{id}/payment` with an `Idempotency-Key`,
+   then run the worker in a separate process:
+   ```bash
+   python -m services.payment_executor.run_worker --provider fake
+   ```
+5. **Evidence** — `GET /api/v1/missions/{id}/audit/verify` returns
+   `AUDIT_VALID`; `GET /api/v1/missions/{id}/replay` returns the trusted
+   projection and the `decision_trace` array of `ADMIT → BIND → EXECUTE`
+   entries.
+6. **Adversarial** — `make attack-full`, then read
+   `reports/attack-lab/run.json`, or open the console's Attack Lab page.
+
+Swapping `--provider fake` for the Razorpay TEST adapter requires
+`rzp_test_`-prefixed credentials in the environment; see
+[`docs/c2-razorpay-test-mode.md`](docs/c2-razorpay-test-mode.md).
+
+## The full invariant contract
+
+The six headline invariants above are drawn from this set. Each is enforced by
+code and exercised by tests.
+
+```text
+NO VALID AUTHORIZATION             → NO PAYMENT
+LLM OUTPUT                         → NEVER AUTHORIZATION
+MERCHANT CONTENT                   → NEVER SYSTEM AUTHORITY
+LOWER AUTHORITY DATA               → CANNOT MODIFY HIGHER AUTHORITY POLICY
+HARD LIMIT EXCEEDED                → PAYMENT IMPOSSIBLE
+TRANSACTION CHANGED AFTER APPROVAL → AUTHORIZATION INVALID
+EXPIRED / REPLAYED APPROVAL        → PAYMENT IMPOSSIBLE
+DENIED CAPABILITY                  → PRIVILEGED EXECUTOR UNREACHABLE
+SAME IDEMPOTENCY KEY               → AT MOST ONE LOGICAL PAYMENT
+AUDIT EVENT MODIFIED               → VERIFICATION FAILURE
+UNTRUSTED DATA                     → RETAINS PROVENANCE / TAINT
+```
+
+## Full limitation registers
+
+The machine-readable registers are `services/attack_lab/limitations.py` and
+`services/risk_engine/limitations.py`; both are exported to the console.
+
+| ID | Limitation |
+|---|---|
+| KL-01 | Tail truncation and whole-chain deletion are undetectable without an external anchor. Demonstrated, never counted as a blocked attack. |
+| KL-02 | PACTRA does not prove semantic fidelity between natural-language intent and structured intent. |
+| KL-03 | Audit canonicalization is weaker than the transaction-digest encoder; historical hashes are preserved rather than rewritten. |
+| KL-04 | `USER_ED25519` uses one demo key — not production user identity or an account credential system. |
+| KL-05 | Merchant identity is registration-based, not cryptographic. |
+| KL-06 | Reconciliation trusts a provider that positively reports holding no payment. A lying provider can induce a duplicate — measured directly. |
+| KL-07 | Reported latency is harness-local, not deployed enforcement latency. |
+| RL-01..RL-09 | The advisory risk engine's evaluation corpus is synthetic, authored, trivially separable, and has no held-out set. Its rates are development-set metrics. |
+
+Additionally: Razorpay is test-mode and `PARTIAL` (no Checkout front end, no
+live-mode validation); MCP is a partial request-shape translator with no server
+or transport; AP2 / x402 / ACP are `PLANNED`; and there is no authentication
+layer in front of the API, which is why the Attack Lab and risk evaluation are
+CLI-only.
 
 ## Non-negotiable engineering rules
 
@@ -69,67 +269,59 @@ proposals into the top of the kernel.
 pactra/
 ├── apps/
 │   ├── api/                    # FastAPI entrypoint, DB models, migrations
-│   └── web/                    # Next.js dashboard + Adversarial Test Lab (later)
+│   └── web/                    # Next.js operations console (Phase 9)
 ├── services/
 │   ├── agent_orchestrator/     # mission state machine, mock merchants
 │   ├── security_kernel/        # provenance, taint, authority, capability,
-│   │                           #   invariants, binding, authorization, replay (Phase 2–3)
+│   │                           #   invariants, binding, authorization, replay
 │   ├── policy_engine/          # deterministic policy, normalization, ranking
-│   ├── payment_executor/       # provider protocol, idempotency, outbox (Phase 4)
+│   ├── payment_executor/       # provider protocol, idempotency, outbox, worker
 │   ├── risk_engine/            # advisory risk/anomaly scoring, evaluation
-│   │                           #   harness + CLI (Phase 7)
+│   │                           #   harness + CLI
 │   ├── adapters/               # typed translation families, sealed registry,
-│   │                           #   protocol support matrix (Phase 8)
+│   │                           #   protocol support matrix
 │   ├── attack_lab/             # adversarial scenarios, runner, metrics,
-│   │                           #   evaluation harness + CLI (Phase 6)
+│   │                           #   evaluation harness + CLI
 │   └── audit_ledger/           # append-only hash-chained events + verify/replay
 ├── reports/attack-lab/         # generated evaluation JSON (gitignored)
 ├── reports/risk-engine/        # generated risk evaluation JSON (gitignored)
 ├── packages/schemas/           # shared typed request/event/provenance schemas
 ├── infra/                      # Docker Compose (Postgres/Redis)
-├── docs/architecture.md
+├── docs/                       # architecture, C1 trust contract, C2 Razorpay,
+│                               #   consolidated evidence record
+├── scripts/                    # external demo approval signer
 ├── tests/
 ├── PACTRA_BUILD_SPEC.md
 ├── CLAUDE_CODE_PROMPT.md
 └── README.md
 ```
 
-Directories for later phases are created as those phases begin.
-
-## Critical invariants (the test contract)
-
-```text
-NO VALID AUTHORIZATION → NO PAYMENT
-LLM OUTPUT → NEVER AUTHORIZATION
-MERCHANT CONTENT → NEVER SYSTEM AUTHORITY
-LOWER AUTHORITY DATA → CANNOT MODIFY HIGHER AUTHORITY POLICY
-HARD LIMIT EXCEEDED → PAYMENT IMPOSSIBLE
-TRANSACTION CHANGED AFTER APPROVAL → AUTHORIZATION INVALID
-EXPIRED / REPLAYED APPROVAL → PAYMENT IMPOSSIBLE
-DENIED CAPABILITY → PRIVILEGED EXECUTOR UNREACHABLE
-SAME IDEMPOTENCY KEY → AT MOST ONE LOGICAL PAYMENT
-AUDIT EVENT MODIFIED → VERIFICATION FAILURE
-UNTRUSTED DATA → RETAINS PROVENANCE / TAINT
-```
-
 ## Phase roadmap
 
 ```text
-Phase 1  Domain + deterministic policy + audit chain            [DONE]
+Phase 1  Domain + deterministic policy + audit chain                [DONE]
 Phase 2  Security-kernel primitives: provenance, taint,
-         authority lattice, capability firewall                 [DONE]
-Phase 3  Transaction binding + authorization + replay protection [DONE]
+         authority lattice, capability firewall                     [DONE]
+Phase 3  Transaction binding + authorization + replay protection    [DONE]
 Phase 4  Payment reliability: FakeProvider, idempotency, outbox,
-         webhook verification, fault injection; Razorpay test  [DONE,
-         Razorpay adapter partial — see below]
-Phase 5  Audit /verify endpoint + corruption test + event replay  [DONE]
+         webhook verification, fault injection                      [DONE,
+         Razorpay adapter PARTIAL / test mode only — see below]
+Phase 5  Audit /verify endpoint + corruption test + event replay    [DONE]
 Phase 6  Adversarial Attack Lab + evaluation harness (real metrics) [DONE]
-Phase 7  Risk/anomaly engine (advisory only)                       [DONE,
-         deterministic heuristic; ML deliberately NOT added — see below]
-Phase 8  Protocol adapter correction (integration families)       [DONE]
-Phase 9  Frontend, including the Adversarial Test Lab UI
-Phase 10 Demo hardening: seeded data, one-command demo, metrics
+Phase 7  Risk/anomaly engine (advisory only)                        [DONE,
+         deterministic heuristic; ML deliberately NOT added]
+Phase 8  Protocol adapter correction (integration families)         [DONE]
+Phase 9  Frontend operations console, incl. the Attack Lab UI       [DONE]
+C1       Trust-boundary freeze + Decision Trace contract            [DONE]
+C2       Razorpay TEST-mode payment path + create fence             [DONE,
+         real TEST Order created; Checkout/capture NOT completed]
 ```
+
+> This is v2. It supersedes the v1 "Secure Multi-Agent Commerce & Payment
+> Gateway" direction, but **keeps** its still-valid requirements — deterministic
+> policy, human approval, Razorpay test mode, hash-chained audit, idempotency,
+> strict schemas, and testing — integrated into the adversarial design. See
+> `PACTRA_BUILD_SPEC.md` and `docs/architecture.md`.
 
 ---
 
@@ -621,12 +813,12 @@ python -m services.payment_executor.run_worker --provider fake
 ### Not implemented in Phase 4
 
 No Attack Lab or evaluation harness (delivered in Phase 6, below), no risk
-engine (delivered in Phase 7, below), no protocol adapters (Phase 8), no
-frontend (Phase 9). No cryptographic signing of
-user authorizations was implemented by Phase 4; the later signed-authorization
-hardening adds the scoped demo proof above. Cryptographic merchant
-authentication remains unimplemented. No transport-scoped security log for rejected
-webhooks.
+engine (delivered in Phase 7, below), no protocol adapters (delivered in Phase
+8, below), no frontend (delivered in Phase 9, below). No cryptographic signing
+of user authorizations was implemented by Phase 4; the later
+signed-authorization hardening adds the scoped demo proof above. Cryptographic
+merchant authentication remains unimplemented. No transport-scoped security log
+for rejected webhooks.
 
 ---
 
@@ -852,18 +1044,27 @@ GET /api/v1/missions/{id}/replay          # read-only; gated on verification
 No external anchor for the audit chain, so tail truncation and whole-chain
 deletion remain undetectable (above). No Attack Lab or evaluation harness
 (delivered in Phase 6, below), no risk engine (delivered in Phase 7, below), no
-protocol adapters (Phase 8), no frontend (Phase 9). Signing was not part of
-Phase 5; the later demo approval proof does not add cryptographic merchant
-authentication.
+protocol adapters (delivered in Phase 8, below), no frontend (delivered in
+Phase 9, below). Signing was not part of Phase 5; the later demo approval proof
+does not add cryptographic merchant authentication.
 
 ---
 
 ## Phase 6 — adversarial attack lab + evaluation harness (implemented)
 
-Phase 6 stops describing PACTRA as secure and starts **measuring** it. 47
-scenarios run through the real kernel — 36 malicious, 10 benign controls, and 1
-demonstrated known limitation — and every number below came out of an executed
-run. Nothing is hardcoded and nothing is asserted into existence.
+Phase 6 stops describing PACTRA as secure and starts **measuring** it. Phase 6
+introduced 47 scenarios — 36 malicious, 10 benign controls, and 1 demonstrated
+known limitation — and that set remains PINNED BY ID as the canonical Phase 6
+baseline so later additions cannot silently move its denominators. The full
+current suite is **67 scenarios**: Phase 8 added 13 hostile adapter scenarios
+and 3 benign adapter controls, and the signed-approval hardening added 4 more.
+Every number below came out of an executed run. Nothing is hardcoded and nothing
+is asserted into existence.
+
+The Attack Lab is an **authored adversarial regression harness**. It proves that
+the scenarios its author wrote are refused by the real kernel, reproducibly. It
+is not certification, not independent red-teaming, and not evidence about attacks
+nobody wrote.
 
 ```bash
 python -m services.attack_lab.run --list
@@ -957,12 +1158,13 @@ same mutation test exists for prompt injection's differential comparison.
 
 ### Benign controls, and why FP/FN needs them
 
-A kernel that denied everything would score a perfect block rate. Ten controls —
-an allowed transaction, human approval, valid consumption, a settled payment, an
-idempotent retry, transient-failure recovery, a genuine webhook, reconciliation,
-chain verification, trusted replay — run the same real paths with
-`expected_status = NOT_BLOCKED`. A control that comes back BLOCKED is counted as
-a false positive rather than quietly re-labelled.
+A kernel that denied everything would score a perfect block rate. Ten Phase 6
+controls — an allowed transaction, human approval, valid consumption, a settled
+payment, an idempotent retry, transient-failure recovery, a genuine webhook,
+reconciliation, chain verification, trusted replay — run the same real paths with
+`expected_status = NOT_BLOCKED`. Phase 8 added three benign adapter controls, so
+the full suite runs 13. A control that comes back BLOCKED is counted as a false
+positive rather than quietly re-labelled.
 
 ### Metric definitions
 
@@ -989,57 +1191,33 @@ of hidden by computing them over slightly different subsets.
 
 ### Measured run
 
-Generated by `python -m services.attack_lab.run --all --iterations 10
---require-postgres` on the development machine (Linux, Python 3.14, in-memory
-SQLite + local PostgreSQL 16 via `infra/docker-compose.yml`), 2026-08-28.
-Reproduce with that exact command; results are not committed.
+The current release run. Generated by `make attack-full`
+(`python -m services.attack_lab.run --all --iterations 10 --require-postgres`) on
+the development machine (Linux, in-memory SQLite + local PostgreSQL via
+`infra/docker-compose.yml`), 2026-09-04. Reproduce with that exact command;
+results are gitignored and not committed.
 
 ```text
-iterations 10     scenarios 47     runs 470     postgres exercised: yes
+iterations 10   scenarios 67   runs 670   postgres exercised: yes
 
-attack runs                   360  (decisive 360)
-attacks blocked               360
-attacks NOT blocked             0
-errors                          0
-inconclusive                    0
-known-limitation runs          10  (excluded from attack rates)
-
-benign control runs           100  (decisive 100)
-controls correctly allowed    100
-controls wrongly blocked        0
-
-attack_block_rate             100.00%   = 360/360
-attack_success_rate             0.00%   = 0/360
-invariant_preservation_rate   100.00%   over 460 runs that measured one
-replay_attack_success_rate      0.00%   = 0/30
-duplicate_payment_rate          0.00%   = 0/40
-false_positive_rate             0.00%   = 0/100
-false_negative_rate             0.00%   = 0/360
-reason_match_rate             100.00%   = 320/320
-
-latency (attack execution only, harness-local — NOT production enforcement):
-  samples 470   p50 18.48 ms   p95 267.86 ms   p99 536.47 ms
-  min 1.59 ms   max 692.95 ms   mean 52.62 ms
+530 / 530  malicious runs blocked        130 / 130  controls correctly allowed
+  0        errors, inconclusive, findings, bypasses
 ```
 
-Per category, all 10 iterations:
+Every rate above resolves to 0.00% or 100.00% over the denominators defined
+above. **The full metric dump, the per-category table and the harness-local
+latency percentiles are recorded once, in
+[`docs/evidence.md`](docs/evidence.md)** — they are not restated here, because
+two copies of one measurement is one copy too many to keep in sync.
 
-| category | runs | blocked | not blocked | errors | inconclusive |
-|---|---|---|---|---|---|
-| INPUT_TRUST | 40 | 40 | 0 | 0 | 0 |
-| AUTHORITY | 30 | 30 | 0 | 0 | 0 |
-| TRANSACTION | 60 | 60 | 0 | 0 | 0 |
-| PAYMENT_RELIABILITY | 70 | 70 | 0 | 0 | 0 |
-| WEBHOOK | 30 | 30 | 0 | 0 | 0 |
-| AUDIT | 70 | 70 | 0 | 0 | 0 |
-| CONCURRENCY (PostgreSQL) | 60 | 60 | 0 | 0 | 0 |
-| BENIGN_CONTROL | 100 | 0 (correct) | 100 | 0 | 0 |
-| KNOWN_LIMITATION | 10 | — | 10 | 0 | 0 |
+The 47-scenario Phase 6 canonical baseline is still selectable by ID with
+`--phase6-baseline`, precisely so the expanded suite above cannot be mistaken
+for it.
 
-The latency spread is honest rather than flattering: a scenario that runs two
-complete missions costs far more than one that presents a mutated digest, and
-`execute_ms` includes whichever it is. It measures this harness, not a
-deployment.
+The latency spread in that record is honest rather than flattering: a scenario
+that runs two complete missions costs far more than one that presents a mutated
+digest, and `execute_ms` includes whichever it is. It measures this harness, not
+a deployment.
 
 ### Scenario inventory
 
@@ -1051,7 +1229,8 @@ protected fields) · capability escalation (five forged capability sets)
 
 **TRANSACTION** — hard budget bypass · transaction mutation (all nine bound
 fields) · authorization replay · stale authorization · policy-version mutation ·
-offer-version mutation
+offer-version mutation · forged approval signature · cross-mission signature
+replay · post-signature transaction mutation · approval-proof removal
 
 **PAYMENT_RELIABILITY** — idempotency conflict · duplicate payment · provider
 timeout after create · provider amount / currency / idempotency-key mismatch ·
@@ -1068,7 +1247,18 @@ injection (refused at two layers)
 same-key payment · conflicting idempotency key · outbox double-claim ·
 conflicting terminal webhooks · concurrent audit append
 
-**BENIGN_CONTROL** — the ten legitimate flows listed above
+**ADAPTER** — adapter identity spoof · protocol-version spoof · capability
+injection · merchant-trust injection · policy-override smuggling · authorization
+forgery · `payment.execute` escalation · adapter transaction mutation · confused
+deputy · malformed payload · unknown privileged field · cross-family confusion ·
+registry bypass
+
+**KNOWN_LIMITATION** — audit tail truncation (demonstrated, never counted as a
+blocked attack)
+
+**BENIGN_CONTROL** — the ten legitimate flows listed above, plus three benign
+adapter controls: an MCP tool call, a commerce catalog, and an
+authorization-intent translation
 
 ### PostgreSQL is where the races are proven
 
@@ -1125,11 +1315,12 @@ endpoint that creates authorizations and payments, so none was added. No new
 table and no migration: nothing in the kernel reads an evaluation report, and a
 migration whose only purpose is to look thorough is decoration. Reports are
 filesystem JSON under a gitignored `reports/attack-lab/`. No protocol adapters
-(Phase 8), no frontend (Phase 9). Signing was not part of Phase 6; the later
-LOCAL CRYPTOGRAPHIC APPROVAL PROOF is a separate authored mechanism-coverage
-expansion and adds no cryptographic merchant authentication. (The advisory risk engine
-arrived in Phase 7, below; it changed nothing in this phase — the Attack Lab's
-scenarios, metrics and block-rate semantics are untouched by it.)
+(delivered in Phase 8, below), no frontend (delivered in Phase 9, below).
+Signing was not part of Phase 6; the later LOCAL CRYPTOGRAPHIC APPROVAL PROOF
+is a separate authored mechanism-coverage expansion and adds no cryptographic
+merchant authentication. (The advisory risk engine arrived in Phase 7, below;
+it changed nothing in this phase — the Attack Lab's scenarios, metrics and
+block-rate semantics are untouched by it.)
 
 ---
 
@@ -1448,16 +1639,18 @@ constants. A rate over an empty denominator is `None` and renders `n/a`.
 
 ### Phase 6 is unchanged
 
-Re-run after integration, 10 iterations, PostgreSQL required:
+Re-run after integration, 10 iterations, PostgreSQL required. On the current
+full suite:
 
 ```text
-47 scenarios   470 runs   360/360 malicious blocked   100/100 controls allowed
+67 scenarios   670 runs   530/530 malicious blocked   130/130 controls allowed
 attack_block_rate 100.00%   false_positive_rate 0.00%   0 errors   0 inconclusive
 ```
 
-Identical to the Phase 6 baseline. The risk score does not influence whether the
-Attack Lab labels anything BLOCKED, and no Phase 6 scenario, metric, or
-block-rate definition was modified.
+The risk score does not influence whether the Attack Lab labels anything
+BLOCKED, and no Phase 6 scenario, metric, or block-rate definition was modified.
+The 47-ID canonical Phase 6 baseline remains separately selectable so the two
+sets can never be conflated.
 
 ### Known limitations of the measurement
 
@@ -1497,8 +1690,9 @@ less interpretability.
 No user identity and therefore no user-scoped behavioural features. No reviewer
 workflow or escalation routing. No automatic invocation from the mission path.
 No `risk_scores` table and no migration — nothing in the kernel reads a risk row.
-No ML. No protocol adapters (Phase 8), no frontend (Phase 9). Signing was not
-part of Phase 7; the later demo proof does not add merchant authentication.
+No ML. No protocol adapters (delivered in Phase 8, below), no frontend
+(delivered in Phase 9, below). Signing was not part of Phase 7; the later demo
+proof does not add merchant authentication.
 
 ---
 
@@ -1614,3 +1808,78 @@ protocol-authorization verifier, full MCP server, ACP/AP2/x402 adapter, new paym
 database migration or dependency was added. Razorpay remains partial/test-mode,
 with no claim that the adapter authenticates external approval, merchants,
 provider receipt uniqueness, or production completeness.
+
+---
+
+## Phase 9 — operations console (implemented)
+
+The Next.js console is a read-only operations surface over the API. It executes
+no attacks, mutates no audit event, and invents no endpoint. Its single hardest
+rule is that **every number belongs to exactly one labelled tier**:
+
+```text
+LIVE RUNTIME                        read from the PACTRA API for this request
+GENERATED FROM SOURCE               exported from backend source by script
+LAST VERIFIED DEVELOPMENT BENCHMARK a recorded harness run read from reports/
+```
+
+A repository test count and a runtime health metric are different claims, and a
+console that lets one read as the other is not trustworthy. Nothing is
+hardcoded. An unreachable backend renders **PACTRA API unavailable**, never
+zeroes. A blocked attack is a SUCCESS for PACTRA and is never rendered red.
+
+Setup, tiers, colour semantics and quality gates:
+[`apps/web/README.md`](apps/web/README.md).
+
+---
+
+## C1 — trust-boundary freeze and Decision Trace (implemented)
+
+C1 froze what PACTRA claims. It names the trusted computing base explicitly,
+pins the taint/declassification flow, fixes the approval-display rules the
+console must obey, and freezes the `decision_trace` contract on the existing
+read-only `GET /api/v1/missions/{id}/replay` endpoint.
+
+```text
+stage enum:  ADMIT | BIND | EXECUTE      (exactly three; audit/replay are
+                                          downstream evidence, not a stage)
+```
+
+If audit verification or replay fails, `trusted` is false, `state` is null, and
+`decision_trace` is `[]`. A trace is returned only after the hash chain verifies
+and every enforcement event can be interpreted. The trace is an allow-listed
+action/security record, **not** model chain-of-thought: it exposes no raw
+payload, signature, nonce, private key, provider secret, or merchant
+description.
+
+The full frozen contract, including the exact entry schema and every enum value:
+[`docs/c1-trust-contract.md`](docs/c1-trust-contract.md). A real runtime payload
+is frozen in [`docs/c1-decision-trace-example.json`](docs/c1-decision-trace-example.json).
+
+---
+
+## C2 — Razorpay TEST-mode payment path (implemented)
+
+C2 connects the executor to the real Razorpay Orders API in **test mode only**,
+and does so without assuming anything about the provider that was not measured.
+
+**The correction that shaped the design.** An experiment showed Razorpay's TEST
+API accepting **two Order creates with the same receipt** (same amount,
+currency, receipt, and notes). Every claim that duplicate-receipt rejection
+provides idempotence has therefore been removed from this repository, along with
+the configuration flag that once acknowledged it. Safety is enforced locally
+instead: `UNIQUE(payment_intents.idempotency_key)`, a durable one-way
+`provider_create_fenced_at` create fence committed before the POST, exhaustive
+deterministic receipt reconciliation, and a monotonic
+`provider_ambiguity_observed_at` marker that later weaker evidence cannot erase.
+
+**What was verified, and what it does not prove**, is stated once at the top of
+this README and recorded in full — Order id, amount, receipt-match count, fence
+and ambiguity-marker state, restart proof, audit/replay results and migration
+head — in [`docs/evidence.md`](docs/evidence.md). The short version: a real TEST
+Order was created exactly once and survived a restart without a second create;
+it was not paid, captured, settled, or checked out. An Order is not a Payment.
+
+Provider-state mapping, exact timeout bounds, the dispatch sequence, webhook
+handling and configuration:
+[`docs/c2-razorpay-test-mode.md`](docs/c2-razorpay-test-mode.md).
