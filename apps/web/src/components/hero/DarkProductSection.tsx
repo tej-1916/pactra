@@ -15,15 +15,15 @@ export function DarkProductSection() {
       icon: ShieldCheck,
       description:
         "LLMs select and propose transactions, but PACTRA applies deterministic policy and invariant checks before authority-bearing transaction execution.",
-      code: `// Deterministic Admission Policy
+      code: `// ILLUSTRATIVE SCHEMA EXAMPLE · Deterministic Admission Policy
 invariant check_agent_budget(tx: Transaction) {
   assert tx.amount <= agent.authority_limit, "EXCEEDS_GRANTED_AUTHORITY";
   assert tx.merchant.verified == true, "UNTRUSTED_MERCHANT_ORIGIN";
   assert tx.nonce == expected_nonce(), "REPLAY_ATTEMPT_DETECTED";
 } => ADMIT_PASS`,
       metrics: [
-        { label: "Invariant Checks", value: "100%", status: "STRICT" },
-        { label: "Policy Execution", value: "< 1.2ms", status: "DETERMINISTIC" },
+        { label: "Policy Evaluation", value: "DETERMINISTIC", status: "NO MODEL INPUT" },
+        { label: "Admission Checks", value: "FAIL-CLOSED", status: "BY DESIGN" },
       ],
     },
     authority: {
@@ -32,37 +32,37 @@ invariant check_agent_budget(tx: Transaction) {
       icon: KeyRound,
       description:
         "Canonical transaction binding and deterministic authorization. Binds transaction digest, offer version, expiry, and nonce before authorization.",
-      code: `// Canonical Transaction Binding & Authorization
+      code: `// ILLUSTRATIVE SCHEMA EXAMPLE · Transaction Binding & Authorization Check
 const boundTransaction = {
-  missionId: "msn_8f9a2b",
-  transactionDigest: "0x8f7a...3e1d",
+  missionId: "msn_<id>",
+  transactionDigest: "0x<digest>",
   offerVersion: "v2.1",
-  amount: 25000, // in cents ($250.00)
-  nonce: "nc_7749120485",
-  scheme: "POLICY_AUTO" // Policy-authorized · no user signature required
+  amount: 250000, // paise (₹2,500.00 INR)
+  nonce: "nc_<nonce>",
+  scheme: "POLICY_AUTO" // Policy-activated · no user signature required
 };
 const decision = authorize_binding(boundTransaction); => BIND_BOUND`,
       metrics: [
-        { label: "Binding Scheme", value: "CANONICAL", status: "VERIFIED" },
-        { label: "Replay Protection", value: "ACTIVE", status: "NONCE_HELD" },
+        { label: "Binding Scheme", value: "CANONICAL", status: "BY DESIGN" },
+        { label: "Replay Protection", value: "NONCE-BOUND", status: "BY DESIGN" },
       ],
     },
     payment: {
-      title: "Durable Payment Verification",
-      subtitle: "EXECUTE STAGE · PAYMENT RECONCILIATION",
+      title: "Durable Payment Reconciliation",
+      subtitle: "EXECUTE STAGE · PROVIDER RECONCILIATION",
       icon: Zap,
       description:
-        "Durable PaymentIntent tracking with provider evidence verification, idempotency protection, and reconciliation.",
-      code: `// Durable Payment Verification & Reconciliation
-verify_payment_intent({
-  payment_intent_id: "pi_3K9x1a2b",
-  provider: "razorpay",
-  evidence_status: "SUCCEEDED",
-  idempotency_key: "idemp_99182a"
-}) => EXECUTE_VERIFIED`,
+        "Durable PaymentIntent tracking with a one-way create fence, idempotency protection, and reconciliation against provider records. An unresolved dispatch stays uncertain rather than being guessed either way.",
+      code: `// ILLUSTRATIVE SCHEMA EXAMPLE · Provider Reconciliation
+reconcile_payment_intent({
+  payment_intent_id: "pi_<id>",
+  idempotency_key: "idemp_<key>",
+  create_fence: "CONSUMED",
+  payment_state: "PROVIDER_PENDING" // uncertain until evidence resolves
+}) => RECONCILE_PAYMENT`,
       metrics: [
-        { label: "Payment Intent", value: "DURABLE", status: "TRACKED" },
-        { label: "Reconciliation", value: "IDEMPOTENT", status: "VERIFIED" },
+        { label: "Payment Intent", value: "DURABLE", status: "BY DESIGN" },
+        { label: "Reconciliation", value: "IDEMPOTENT", status: "BY DESIGN" },
       ],
     },
     audit: {
@@ -71,24 +71,24 @@ verify_payment_intent({
       icon: FileCheck,
       description:
         "Tamper-evident audit chain and verified replay through the Decision Trace. Recorded audit events support verified replay and post-hoc verification.",
-      code: `// SCHEMA EXAMPLE · Decision Trace Entry (C1 Contract)
+      code: `// ILLUSTRATIVE SCHEMA EXAMPLE · Decision Trace Entry (C1 Contract)
 DecisionTraceEntry {
-  stage: "EXECUTE",
-  event_type: "PAYMENT_SUCCEEDED",
-  verdict: "SUCCEEDED",
+  stage: "BIND",
+  event_type: "AUTHORIZATION_CREATED",
+  verdict: "PENDING",
   reason_codes: [],
   invariant_id: null,
   approval_scheme: "POLICY_AUTO",
-  policy_outcome: "ALLOW",
-  payment_state: "SUCCEEDED",
+  policy_outcome: null,
+  payment_state: null,
   advisory: false,
-  next_action: "NONE",
-  evidence: { event_id: "evt_8f9a2b", sequence: 4, actor: "PAYMENT_WORKER" },
-  recorded_at: "2026-08-31T03:35:00Z"
-} => VERIFIED_REPLAYABLE`,
+  next_action: "CONTINUE_BIND",
+  evidence: { event_id: "evt_<id>", sequence: 2, actor: "kernel" },
+  recorded_at: "<iso-8601>"
+} => HASH_LINKED_AUDIT_EVIDENCE`,
       metrics: [
-        { label: "Audit Integrity", value: "TAMPER-EVIDENT", status: "VERIFIED" },
-        { label: "Decision Trace", value: "REPLAYABLE", status: "VERIFIED" },
+        { label: "Audit Integrity", value: "TAMPER-EVIDENT", status: "BY DESIGN" },
+        { label: "Decision Trace", value: "REPLAYABLE", status: "BY DESIGN" },
       ],
     },
   };
@@ -174,21 +174,30 @@ DecisionTraceEntry {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 pt-4 border-t border-white/10">
-            {current.metrics.map((metric) => (
-              <div key={metric.label} className="p-2.5 rounded-lg bg-[#12162F]/60 border border-white/10">
-                <span className="text-[10px] font-mono text-[#C7C5F8] block">
-                  {metric.label}
-                </span>
-                <span className="font-mono text-sm font-bold text-white block mt-0.5">
-                  {metric.value}
-                </span>
-                <span className="inline-flex items-center gap-1 font-mono text-[9px] text-[#10B981] font-semibold mt-1">
-                  <CheckCircle2 className="size-2.5" />
-                  {metric.status}
-                </span>
-              </div>
-            ))}
+          {/* Structural properties of the design, not measured output. The
+              heading is part of the claim: a number or a rate does not belong
+              on this panel, and the only place a measured figure is shown is a
+              labelled harness report. */}
+          <div className="pt-4 border-t border-white/10">
+            <span className="font-mono text-[9.5px] font-semibold uppercase tracking-wider text-[#BBB9F5]">
+              Design properties · not measurements
+            </span>
+            <div className="mt-2.5 grid grid-cols-2 gap-3">
+              {current.metrics.map((metric) => (
+                <div key={metric.label} className="p-2.5 rounded-lg bg-[#12162F]/60 border border-white/10">
+                  <span className="text-[10px] font-mono text-[#C7C5F8] block">
+                    {metric.label}
+                  </span>
+                  <span className="font-mono text-sm font-bold text-white block mt-0.5">
+                    {metric.value}
+                  </span>
+                  <span className="inline-flex items-center gap-1 font-mono text-[9px] text-[#10B981] font-semibold mt-1">
+                    <CheckCircle2 className="size-2.5" />
+                    {metric.status}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -199,10 +208,12 @@ DecisionTraceEntry {
               <div className="size-2.5 rounded-full bg-[#EF4444]" />
               <div className="size-2.5 rounded-full bg-[#FBBF24]" />
               <div className="size-2.5 rounded-full bg-[#10B981]" />
-              <span className="text-[11px] text-[#C7C5F8] ml-2">pactra_kernel.rs</span>
+              <span className="font-mono text-[11px] text-[#C7C5F8] ml-2 uppercase tracking-wide">
+                Illustrative schema example
+              </span>
             </div>
-            <span className="text-[10px] text-[#10B981] bg-[#10B981]/15 px-2 py-0.5 rounded border border-[#10B981]/30">
-              STATE: VERIFIED_LEGAL
+            <span className="text-[10px] text-[#C7C5F8] bg-[#202160] px-2 py-0.5 rounded border border-[#7771DF]/40">
+              NOT RUNTIME EVIDENCE
             </span>
           </div>
 
@@ -210,12 +221,16 @@ DecisionTraceEntry {
             <code>{current.code}</code>
           </pre>
 
-          <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#C7C5F8]">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck className="size-3.5 text-[#10B981]" />
-              AUTHORITATIVE CONTRACT ENFORCED
+          {/* The panel is a conceptual explainer, so it says so where the code
+              is, not in an appendix. Nothing here is a measurement, a provider
+              result, or evidence that any payment was paid, captured, settled
+              or completed through Checkout. */}
+          <div className="mt-4 pt-3 border-t border-white/10 flex items-start gap-1.5 text-[11px] leading-relaxed text-[#C7C5F8]">
+            <ShieldCheck className="size-3.5 shrink-0 mt-0.5 text-[#C7C5F8]" />
+            <span>
+              Conceptual illustration of the enforced contract — not runtime evidence, not a
+              measurement, and not a provider result.
             </span>
-            <span className="font-mono text-[10px] text-white">0 FAILS · 100% REPLAYABLE</span>
           </div>
         </div>
       </div>

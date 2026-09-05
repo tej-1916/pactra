@@ -92,7 +92,7 @@ const COMPONENTS: SystemComponentDef[] = [
     runtimeEvidence: () => "NOT RUNTIME VERIFIED",
     runtimeTone: () => "neutral",
     details: "Orders API integration and constant-time HMAC-SHA256 webhook signature verification.",
-    limitations: "Offline tested in test-mode only with rzp_test keys. No checkout frontend exists and no live Razorpay API calls are claimed.",
+    limitations: "Razorpay TEST mode only: rzp_test_* credentials are supported and live-mode credentials are refused. This overview does not itself prove a current provider call — per-transaction provider evidence appears on the mission and payment surfaces. No Checkout front end exists.",
   },
   {
     name: "Audit & Deterministic Replay",

@@ -292,7 +292,6 @@ pactra/
 ├── scripts/                    # external demo approval signer
 ├── tests/
 ├── PACTRA_BUILD_SPEC.md
-├── CLAUDE_CODE_PROMPT.md
 └── README.md
 ```
 

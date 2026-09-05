@@ -91,21 +91,71 @@ def _limitations(register: Any) -> list[dict[str, Any]]:
     ]
 
 
+#: README headings that publish the FULL invariant contract, in priority order.
+#:
+#: Two headings rather than one because the section was renamed: the block under
+#: "## Critical invariants (the test contract)" and the one under "## The full
+#: invariant contract" are the same eleven invariants in the same order, so an
+#: older README still exports correctly and the rename is not a silent break.
+#:
+#: "## Core invariants" is deliberately NOT accepted. That block is a six-line
+#: headline summary drawn from this set and ordered for a reader, so parsing it
+#: would drop five invariants and reorder the rest while still producing a
+#: plausible-looking file. The console publishes the contract, not a digest of
+#: it, and a parser that silently narrows a security claim is worse than one
+#: that fails.
+_CONTRACT_HEADINGS = (
+    "## The full invariant contract",
+    "## Critical invariants (the test contract)",
+)
+
+
 def _invariant_contract() -> list[str]:
     """The test contract, parsed from the README block that publishes it.
 
     Parsed rather than copied so the console cannot claim an invariant the
     README does not, and so a contract change shows up here as a diff.
+
+    Matching is anchored to the heading and then bounded by the NEXT ``##``
+    heading, and the fence is searched for inside that window. The section may
+    open with prose before its fence — the previous pattern required the fence
+    to follow the heading immediately, which is what broke on the rename — and
+    bounding the window means a section that loses its fence fails loudly rather
+    than silently adopting the next section's.
     """
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    match = re.search(
-        r"## Critical invariants \(the test contract\)\s*\n+```text\n(.*?)```",
-        readme,
-        re.DOTALL,
+
+    for heading in _CONTRACT_HEADINGS:
+        anchor = re.search(rf"^{re.escape(heading)}\s*$", readme, re.MULTILINE)
+        if anchor is None:
+            continue
+
+        section = readme[anchor.end() :]
+        next_heading = re.search(r"^## ", section, re.MULTILINE)
+        if next_heading is not None:
+            section = section[: next_heading.start()]
+
+        fence = re.search(r"```text\n(.*?)```", section, re.DOTALL)
+        if fence is None:
+            continue
+
+        # Interior runs collapse to one space, not just the ends. The README
+        # column-aligns these lines so the arrows line up for a reader, and that
+        # padding is typography rather than content — leaving it in would make
+        # the exported contract depend on how wide the longest invariant happens
+        # to be, so re-wrapping the table would show up as a data change.
+        contract = [
+            normalized
+            for line in fence.group(1).splitlines()
+            if (normalized := re.sub(r"\s+", " ", line).strip())
+        ]
+        if contract:
+            return contract
+
+    raise SystemExit(
+        "could not locate the invariant contract block in README.md; expected a "
+        "```text fence under one of: " + ", ".join(repr(h) for h in _CONTRACT_HEADINGS)
     )
-    if match is None:  # pragma: no cover - the heading is stable
-        raise SystemExit("could not locate the invariant contract block in README.md")
-    return [line.strip() for line in match.group(1).splitlines() if line.strip()]
 
 
 def build() -> dict[str, Any]:
